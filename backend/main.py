@@ -117,6 +117,28 @@ def _legal_risk_level(critical: int, serious: int) -> str:
     return "LOW"
 
 
+def _wcag_sc_from_tag(tag: str) -> Optional[str]:
+    """Convert an axe criterion tag to dotted SC notation, e.g.
+    'wcag412' -> '4.1.2', 'wcag1410' -> '1.4.10'. Returns None for
+    level/version tags like 'wcag2aa' (digits followed by letters)."""
+    if not tag.startswith("wcag"):
+        return None
+    digits = tag[4:]
+    if not digits.isdigit() or len(digits) < 3:
+        return None  # level tag (wcag2aa, wcag21a) or malformed
+    return f"{digits[0]}.{digits[1]}.{digits[2:]}"
+
+
+def _wcag_level_from_tags(tags: list) -> Optional[str]:
+    """Detect conformance level from axe level tags: wcag2aa/wcag21aa -> 'AA',
+    wcag2a/wcag21a -> 'A'. AA takes precedence when both are present."""
+    if any(re.fullmatch(r"wcag\d*aa", t) for t in tags):
+        return "AA"
+    if any(re.fullmatch(r"wcag\d*a", t) for t in tags):
+        return "A"
+    return None
+
+
 _PDF_WORKER = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "scan-worker", "pdf-worker.js"
 )
@@ -1073,22 +1095,23 @@ def generate_compliance_report(scan_id: int):
     project_name = project.name if project else "the scanned website"
     scan_date = (scan.completed_at or scan.started_at or datetime.utcnow()).strftime("%B %d, %Y")
 
-    # WCAG level breakdown from axe tag conventions (wcag2a = Level A, wcag2aa = Level AA)
+    # WCAG breakdown from axe tags: criterion tags (wcag412) are pure digits;
+    # level tags (wcag2aa) carry the conformance level.
     failing_a: set = set()
     failing_aa: set = set()
     criterion_counts: dict = {}
     for i in all_issues:
         tags = json.loads(i.wcag_criteria or "[]")
-        is_a = "wcag2a" in tags and "wcag2aa" not in tags
-        is_aa = "wcag2aa" in tags
+        level = _wcag_level_from_tags(tags)
         for tag in tags:
-            if tag.startswith("wcag") and len(tag) > 4 and tag[4].isdigit():
-                crit = tag[4:]  # e.g. "1.1.1" or "111"
-                criterion_counts[crit] = criterion_counts.get(crit, 0) + 1
-                if is_a:
-                    failing_a.add(crit)
-                if is_aa:
-                    failing_aa.add(crit)
+            crit = _wcag_sc_from_tag(tag)
+            if crit is None:
+                continue
+            criterion_counts[crit] = criterion_counts.get(crit, 0) + 1
+            if level == "A":
+                failing_a.add(crit)
+            elif level == "AA":
+                failing_aa.add(crit)
 
     top_criteria = sorted(criterion_counts.items(), key=lambda x: -x[1])[:8]
     failing_criteria_list = [f"SC {k}: {v} issue{'s' if v > 1 else ''}" for k, v in top_criteria]
