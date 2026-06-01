@@ -517,32 +517,52 @@ function ScoreRing({ score }) {
   );
 }
 
-function HolisticView({ scanId, review, loading, onRun, error }) {
-  if (loading) return <HolisticProgress />;
+// ── Shared AI error state ─────────────────────────────────────────────────────
+// Distinguishes three failure modes so the message is actionable:
+//   1. missing / invalid key  → tell the user to set GROQ_API_KEY
+//   2. rate limit (429)        → tell them the daily limit is hit + when to retry
+//   3. anything else           → generic inline error with retry
 
-  if (error) {
-    if (error.includes("503") || error.toLowerCase().includes("groq")) {
-      return (
-        <div className="groq-callout">
-          <div className="groq-callout-title">AI features unavailable</div>
-          <p className="groq-callout-body">
-            AI features need a <code>GROQ_API_KEY</code> to run.{" "}
-            Get a free key at{" "}
-            <a href="https://console.groq.com" target="_blank" rel="noopener noreferrer">
-              console.groq.com
-            </a>
-            , then set it in your environment and restart the server.
-          </p>
-        </div>
-      );
-    }
+function AiError({ error, onRetry }) {
+  const lower = (error || "").toLowerCase();
+
+  if (lower.includes("groq_api_key") || lower.includes("not set") || lower.includes("invalid")) {
     return (
-      <div className="inline-error">
-        <span>Error: {error}</span>
-        <button className="inline-error-retry" onClick={onRun}>Retry</button>
+      <div className="groq-callout">
+        <div className="groq-callout-title">AI features need a key</div>
+        <p className="groq-callout-body">
+          AI features require a <code>GROQ_API_KEY</code>. Get a free key at{" "}
+          <a href="https://console.groq.com" target="_blank" rel="noopener noreferrer">
+            console.groq.com
+          </a>
+          , then set it in your environment and restart the server.
+        </p>
       </div>
     );
   }
+
+  if (lower.includes("rate limit") || error.includes("429")) {
+    return (
+      <div className="groq-callout groq-callout-limit">
+        <div className="groq-callout-title">Daily AI limit reached</div>
+        <p className="groq-callout-body">{error}</p>
+        {onRetry && <button className="inline-error-retry" onClick={onRetry}>Try again</button>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="inline-error">
+      <span>Error: {error}</span>
+      {onRetry && <button className="inline-error-retry" onClick={onRetry}>Retry</button>}
+    </div>
+  );
+}
+
+function HolisticView({ scanId, review, loading, onRun, error }) {
+  if (loading) return <HolisticProgress />;
+
+  if (error) return <AiError error={error} onRetry={onRun} />;
 
   if (!review) return (
     <div className="holistic-empty">
@@ -558,29 +578,7 @@ function HolisticView({ scanId, review, loading, onRun, error }) {
     </div>
   );
 
-  if (review.error) {
-    if (review.error.includes("503") || review.error.toLowerCase().includes("groq")) {
-      return (
-        <div className="groq-callout">
-          <div className="groq-callout-title">AI features unavailable</div>
-          <p className="groq-callout-body">
-            AI features need a <code>GROQ_API_KEY</code> to run.{" "}
-            Get a free key at{" "}
-            <a href="https://console.groq.com" target="_blank" rel="noopener noreferrer">
-              console.groq.com
-            </a>
-            , then set it in your environment and restart the server.
-          </p>
-        </div>
-      );
-    }
-    return (
-      <div className="inline-error">
-        <span>Error: {review.error}</span>
-        <button className="inline-error-retry" onClick={onRun}>Retry</button>
-      </div>
-    );
-  }
+  if (review.error) return <AiError error={review.error} onRetry={onRun} />;
 
   const overall = review.overall ?? 0;
   const overallCls = overall >= 70 ? "holistic-overall-good" : overall >= 50 ? "holistic-overall-warn" : "holistic-overall-bad";
@@ -831,28 +829,7 @@ function ManualChecklistView({ scanId, checklist, loading, checklistError, check
     );
   }
 
-  if (checklistError) {
-    if (checklistError.includes("503") || checklistError.toLowerCase().includes("groq")) {
-      return (
-        <div className="groq-callout">
-          <div className="groq-callout-title">AI features unavailable</div>
-          <p className="groq-callout-body">
-            Checklist generation needs a <code>GROQ_API_KEY</code>.{" "}
-            Get a free key at{" "}
-            <a href="https://console.groq.com" target="_blank" rel="noopener noreferrer">
-              console.groq.com
-            </a>.
-          </p>
-        </div>
-      );
-    }
-    return (
-      <div className="inline-error">
-        <span>Error generating checklist: {checklistError}</span>
-        <button className="inline-error-retry" onClick={onGenerate}>Retry</button>
-      </div>
-    );
-  }
+  if (checklistError) return <AiError error={checklistError} onRetry={onGenerate} />;
 
   if (checklist.length === 0)
     return (
@@ -949,28 +926,7 @@ function ComplianceReportView({ report, loading, reportError, onGenerate }) {
     );
   }
 
-  if (reportError) {
-    if (reportError.includes("503") || reportError.toLowerCase().includes("groq")) {
-      return (
-        <div className="groq-callout">
-          <div className="groq-callout-title">AI features unavailable</div>
-          <p className="groq-callout-body">
-            Report generation needs a <code>GROQ_API_KEY</code>.{" "}
-            Get a free key at{" "}
-            <a href="https://console.groq.com" target="_blank" rel="noopener noreferrer">
-              console.groq.com
-            </a>.
-          </p>
-        </div>
-      );
-    }
-    return (
-      <div className="inline-error">
-        <span>Error generating report: {reportError}</span>
-        <button className="inline-error-retry" onClick={onGenerate}>Retry</button>
-      </div>
-    );
-  }
+  if (reportError) return <AiError error={reportError} onRetry={onGenerate} />;
 
   if (!report)
     return (
@@ -987,28 +943,7 @@ function ComplianceReportView({ report, loading, reportError, onGenerate }) {
       </div>
     );
 
-  if (report.error) {
-    if (report.error.includes("503") || report.error.toLowerCase().includes("groq")) {
-      return (
-        <div className="groq-callout">
-          <div className="groq-callout-title">AI features unavailable</div>
-          <p className="groq-callout-body">
-            Report generation needs a <code>GROQ_API_KEY</code>.{" "}
-            Get a free key at{" "}
-            <a href="https://console.groq.com" target="_blank" rel="noopener noreferrer">
-              console.groq.com
-            </a>.
-          </p>
-        </div>
-      );
-    }
-    return (
-      <div className="inline-error">
-        <span>Error: {report.error}</span>
-        <button className="inline-error-retry" onClick={onGenerate}>Retry</button>
-      </div>
-    );
-  }
+  if (report.error) return <AiError error={report.error} onRetry={onGenerate} />;
 
   const scoreCls = report.score >= 80 ? "report-score-good" : report.score >= 60 ? "report-score-warn" : "report-score-bad";
   const riskCls = { HIGH: "report-risk-high", MEDIUM: "report-risk-medium", LOW: "report-risk-low" }[report.risk] || "";

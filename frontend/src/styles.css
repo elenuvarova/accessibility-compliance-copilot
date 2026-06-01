@@ -338,6 +338,8 @@ h1 {
   font-weight: 500;
 }
 .groq-callout a:hover { text-decoration: underline; }
+.groq-callout-limit { align-items: flex-start; }
+.groq-callout-limit .inline-error-retry { margin-top: var(--space-1); }
 
 .inline-error {
   display: flex;

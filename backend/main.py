@@ -56,6 +56,59 @@ def _get_groq() -> "_groq_module.Groq":
     return _groq_client
 
 
+_GROQ_MODEL = "llama-3.3-70b-versatile"
+
+
+def _groq_complete(
+    messages: list,
+    max_tokens: int,
+    json_mode: bool = False,
+) -> str:
+    """Call Groq and return the message content, translating SDK errors into
+    clean HTTP responses so the client can show a useful message."""
+    client = _get_groq()
+    kwargs = {
+        "model": _GROQ_MODEL,
+        "max_tokens": max_tokens,
+        "messages": messages,
+    }
+    if json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
+    try:
+        completion = client.chat.completions.create(**kwargs)
+    except _groq_module.RateLimitError as exc:
+        retry = ""
+        try:
+            msg = exc.response.json().get("error", {}).get("message", "")
+            # Groq formats retry as "31m41.66s" or "2.5s"
+            m = re.search(r"try again in (?:(\d+)m)?([\d.]+)s", msg)
+            if m:
+                total_min = (int(m.group(1) or 0) * 60 + float(m.group(2))) / 60
+                retry = f" Try again in ~{max(1, round(total_min))} min."
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=429,
+            detail=f"Groq rate limit reached (free tier: 100k tokens/day).{retry}",
+        )
+    except _groq_module.AuthenticationError:
+        raise HTTPException(
+            status_code=503,
+            detail="GROQ_API_KEY is invalid — check your key at console.groq.com",
+        )
+    except _groq_module.APIConnectionError:
+        raise HTTPException(
+            status_code=503,
+            detail="Could not reach Groq. Check your network and try again.",
+        )
+    except _groq_module.APIStatusError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Groq API error ({exc.status_code}). Try again shortly.",
+        )
+    return completion.choices[0].message.content
+
+
 def _legal_risk_level(critical: int, serious: int) -> str:
     if critical > 0 or serious >= 10:
         return "HIGH"
@@ -615,14 +668,12 @@ def suggest_fix(issue_id: int):
         f"3. One sentence: how to verify the fix passes\n\n"
         f"Be concrete. Max 200 words. No preamble."
     )
-    client = _get_groq()
-    completion = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        max_tokens=500,
+    suggestion = _groq_complete(
         messages=[{"role": "user", "content": prompt}],
+        max_tokens=500,
     )
     return {
-        "suggestion": completion.choices[0].message.content,
+        "suggestion": suggestion,
         "wcag_context": wcag_context_chunks,
     }
 
@@ -745,17 +796,15 @@ def holistic_review(scan_id: int):
         '"overall":N,"summary":"...","top_issue":"..."}'
     )
 
-    client = _get_groq()
-    completion = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        max_tokens=900,
+    content = _groq_complete(
         messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"},
+        max_tokens=900,
+        json_mode=True,
     )
     try:
-        return json.loads(completion.choices[0].message.content)
+        return json.loads(content)
     except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=500, detail=f"LLM returned invalid JSON: {exc}")
+        raise HTTPException(status_code=502, detail=f"AI returned invalid JSON: {exc}")
 
 
 # ── HTML / PDF export ─────────────────────────────────────────────────────────
@@ -943,18 +992,16 @@ def generate_manual_checklist(scan_id: int):
         'Respond with JSON only: {"items":[{"category":"...","criterion_id":"...","description":"...","steps":"...","tools_needed":"..."}]}'
     )
 
-    client = _get_groq()
-    completion = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        max_tokens=2500,
+    content = _groq_complete(
         messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"},
+        max_tokens=2500,
+        json_mode=True,
     )
     try:
-        result = json.loads(completion.choices[0].message.content)
+        result = json.loads(content)
         items = result.get("items", [])
     except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=500, detail=f"LLM returned invalid JSON: {exc}")
+        raise HTTPException(status_code=502, detail=f"AI returned invalid JSON: {exc}")
 
     with Session(engine) as s:
         for item in items:
@@ -1069,17 +1116,15 @@ def generate_compliance_report(scan_id: int):
         'Respond with JSON only: {"executive_summary":"...","for_developers":"...","remediation_timeline":"...","wcag_conformance_statement":"..."}'
     )
 
-    client = _get_groq()
-    completion = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        max_tokens=700,
+    content = _groq_complete(
         messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"},
+        max_tokens=700,
+        json_mode=True,
     )
     try:
-        ai_text = json.loads(completion.choices[0].message.content)
+        ai_text = json.loads(content)
     except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=500, detail=f"LLM returned invalid JSON: {exc}")
+        raise HTTPException(status_code=502, detail=f"AI returned invalid JSON: {exc}")
 
     return {
         **ai_text,
