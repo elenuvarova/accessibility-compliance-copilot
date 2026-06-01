@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
 const SEVERITY_ORDER = { critical: 0, serious: 1, moderate: 2, minor: 3 };
 
@@ -37,6 +37,35 @@ const RULE_GUIDANCE = {
 const DEFAULT_GUIDANCE =
   "Test with a screen reader (VoiceOver on Mac, NVDA on Windows) and keyboard-only navigation.";
 
+// ── Theme toggle ──────────────────────────────────────────────────────────────
+
+function useTheme() {
+  const [theme, setTheme] = useState(() => {
+    try { return localStorage.getItem("a11y-theme") || "dark"; } catch { return "dark"; }
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme === "light" ? "light" : "");
+    try { localStorage.setItem("a11y-theme", theme); } catch { /* ignore */ }
+  }, [theme]);
+
+  const toggle = useCallback(() => setTheme((t) => (t === "light" ? "dark" : "light")), []);
+  return [theme, toggle];
+}
+
+function ThemeToggle({ theme, onToggle }) {
+  return (
+    <button
+      className="theme-toggle"
+      onClick={onToggle}
+      aria-label={theme === "light" ? "Switch to dark theme" : "Switch to light theme"}
+      title={theme === "light" ? "Switch to dark theme" : "Switch to light theme"}
+    >
+      {theme === "light" ? "○" : "●"}
+    </button>
+  );
+}
+
 // ── Badges ────────────────────────────────────────────────────────────────────
 
 function ScoreBadge({ score }) {
@@ -59,7 +88,6 @@ function LegalRiskBadge({ counts }) {
 function SitemapPicker({ urls, onSelect, onClose }) {
   const [checked, setChecked] = useState(() => new Set(urls.slice(0, 20)));
   const toggle = (u) => setChecked((s) => { const n = new Set(s); n.has(u) ? n.delete(u) : n.add(u); return n; });
-  const all = checked.size === urls.length;
   return (
     <div className="sitemap-overlay" onClick={onClose}>
       <div className="sitemap-modal" onClick={(e) => e.stopPropagation()}>
@@ -69,7 +97,7 @@ function SitemapPicker({ urls, onSelect, onClose }) {
             <button className="smap-btn" onClick={() => setChecked(new Set(urls))}>All</button>
             <button className="smap-btn" onClick={() => setChecked(new Set())}>None</button>
           </div>
-          <button className="sitemap-close" onClick={onClose}>✕</button>
+          <button className="sitemap-close" onClick={onClose} aria-label="Close">✕</button>
         </div>
         <div className="sitemap-list">
           {urls.map((u) => (
@@ -93,38 +121,177 @@ function SitemapPicker({ urls, onSelect, onClose }) {
   );
 }
 
-// ── History view ──────────────────────────────────────────────────────────────
+// ── Interactive sparkline ─────────────────────────────────────────────────────
 
-function ScoreSparkline({ history }) {
-  const W = 320, H = 64, PAD = 12;
+function cubicBezierPath(points) {
+  if (points.length < 2) return "";
+  const d = [`M ${points[0][0].toFixed(1)} ${points[0][1].toFixed(1)}`];
+  for (let i = 1; i < points.length; i++) {
+    const [x0, y0] = points[i - 1];
+    const [x1, y1] = points[i];
+    const cpx = (x0 + x1) / 2;
+    d.push(`C ${cpx.toFixed(1)} ${y0.toFixed(1)}, ${cpx.toFixed(1)} ${y1.toFixed(1)}, ${x1.toFixed(1)} ${y1.toFixed(1)}`);
+  }
+  return d.join(" ");
+}
+
+function ScoreSparkline({ history, large }) {
+  const W = large ? 600 : 320;
+  const H = large ? 120 : 64;
+  const PAD = large ? 16 : 12;
+  const svgRef = useRef(null);
+  const [tooltip, setTooltip] = useState(null);
+
   const n = history.length;
   if (n < 2) return null;
+
   const xs = history.map((_, i) => PAD + (i / (n - 1)) * (W - 2 * PAD));
   const ys = history.map((h) => H - PAD - (h.score / 100) * (H - 2 * PAD));
-  const points = xs.map((x, i) => `${x.toFixed(1)},${ys[i].toFixed(1)}`).join(" ");
-  const latest = history[history.length - 1].score;
-  const color = latest >= 80 ? "#22c55e" : latest >= 60 ? "#f59e0b" : "#ef4444";
+  const pts = xs.map((x, i) => [x, ys[i]]);
+
+  const latest = history[n - 1].score;
+  const colorVar = latest >= 80 ? "var(--color-success)" : latest >= 60 ? "var(--color-warning)" : "var(--color-danger)";
+  const fillColorVar = latest >= 80 ? "var(--color-success-bg)" : latest >= 60 ? "var(--color-warning-bg)" : "var(--color-danger-bg)";
+
+  const pathD = cubicBezierPath(pts);
+  // Close the gradient fill area by going down and back
+  const fillD = pathD + ` L ${xs[n - 1].toFixed(1)} ${H} L ${xs[0].toFixed(1)} ${H} Z`;
+
+  const gradientId = `sg-${large ? "l" : "s"}`;
+
+  const handleMouseMove = (e) => {
+    if (!svgRef.current) return;
+    const rect = svgRef.current.getBoundingClientRect();
+    const mouseX = ((e.clientX - rect.left) / rect.width) * W;
+    let closest = 0;
+    let minDist = Infinity;
+    xs.forEach((x, i) => {
+      const dist = Math.abs(x - mouseX);
+      if (dist < minDist) { minDist = dist; closest = i; }
+    });
+    const h = history[closest];
+    setTooltip({
+      index: closest,
+      x: (xs[closest] / W) * 100,
+      y: (ys[closest] / H) * 100,
+      data: h,
+    });
+  };
+
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="score-sparkline" aria-hidden="true">
-      <polyline points={points} fill="none" stroke={color} strokeWidth="2.5" strokeLinejoin="round" />
-      {history.map((h, i) => (
-        <circle key={i} cx={xs[i].toFixed(1)} cy={ys[i].toFixed(1)} r="4" fill={color}>
-          <title>Scan #{h.id} — {h.score}/100 ({h.total} issues)</title>
-        </circle>
-      ))}
-    </svg>
+    <div
+      className="history-sparkline-container"
+      style={{ position: "relative", display: "inline-block", width: large ? "100%" : `${W}px` }}
+      onMouseLeave={() => setTooltip(null)}
+    >
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${W} ${H}`}
+        className={large ? "score-sparkline-large" : "score-sparkline"}
+        aria-hidden="true"
+        onMouseMove={handleMouseMove}
+        style={{ display: "block", width: large ? "100%" : `${W}px`, height: `${H}px` }}
+      >
+        <defs>
+          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={colorVar} stopOpacity="0.25" />
+            <stop offset="100%" stopColor={colorVar} stopOpacity="0.03" />
+          </linearGradient>
+        </defs>
+        {/* Gradient fill */}
+        <path d={fillD} fill={`url(#${gradientId})`} />
+        {/* Animated line */}
+        <path
+          d={pathD}
+          className="sparkline-path"
+          fill="none"
+          stroke={colorVar}
+          strokeWidth={large ? "2.5" : "2"}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+        {/* Data points */}
+        {history.map((h, i) => (
+          <circle
+            key={i}
+            cx={xs[i].toFixed(1)}
+            cy={ys[i].toFixed(1)}
+            r={tooltip?.index === i ? (large ? 6 : 5) : (large ? 3.5 : 3)}
+            fill={tooltip?.index === i ? colorVar : fillColorVar}
+            stroke={colorVar}
+            strokeWidth="1.5"
+            style={{ transition: "r .1s" }}
+          >
+            <title>Scan #{h.id} — {h.score}/100 ({h.total} issues)</title>
+          </circle>
+        ))}
+        {/* Y-axis labels for large variant */}
+        {large && (
+          <>
+            <text x={PAD - 4} y={PAD} textAnchor="end" fontSize="9" fill="var(--color-text-faint)">100</text>
+            <text x={PAD - 4} y={H / 2} textAnchor="end" fontSize="9" fill="var(--color-text-faint)" dominantBaseline="middle">50</text>
+            <text x={PAD - 4} y={H - PAD} textAnchor="end" fontSize="9" fill="var(--color-text-faint)" dominantBaseline="auto">0</text>
+            <line x1={PAD} y1={PAD} x2={PAD} y2={H - PAD} stroke="var(--color-border)" strokeWidth="1" />
+            <line x1={PAD} y1={H / 2} x2={W - PAD} y2={H / 2} stroke="var(--color-border)" strokeWidth="0.5" strokeDasharray="3,3" />
+          </>
+        )}
+      </svg>
+      {tooltip && (
+        <div
+          className="sparkline-tooltip"
+          style={{ left: `${tooltip.x}%`, top: `${tooltip.y}%` }}
+          aria-hidden="true"
+        >
+          <div className="sparkline-tooltip-title">Scan #{tooltip.data.id}</div>
+          <div className="sparkline-tooltip-row">
+            <span>Score</span>
+            <span className="sparkline-tooltip-val">{tooltip.data.score}/100</span>
+          </div>
+          {tooltip.data.completed_at && (
+            <div className="sparkline-tooltip-row">
+              <span>Date</span>
+              <span className="sparkline-tooltip-val">
+                {new Date(tooltip.data.completed_at).toLocaleDateString()}
+              </span>
+            </div>
+          )}
+          {tooltip.data.critical != null && (
+            <div className="sparkline-tooltip-row">
+              <span>Critical</span>
+              <span className="sparkline-tooltip-val" style={{ color: "var(--color-critical-text)" }}>
+                {tooltip.data.critical}
+              </span>
+            </div>
+          )}
+          {tooltip.data.serious != null && (
+            <div className="sparkline-tooltip-row">
+              <span>Serious</span>
+              <span className="sparkline-tooltip-val" style={{ color: "var(--color-serious-text)" }}>
+                {tooltip.data.serious}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
+// ── History view ──────────────────────────────────────────────────────────────
+
 function HistoryView({ history, diff, currentScanId }) {
   if (!history || history.length === 0)
-    return <p className="muted">No completed scans yet for this project.</p>;
+    return (
+      <div className="tab-empty">
+        <span className="tab-empty-title">No scan history yet</span>
+        <p className="tab-empty-desc">History and regression tracking will appear after your first completed scan.</p>
+      </div>
+    );
   return (
     <div className="history-view">
       <div className="history-header">
-        <div className="history-chart-wrap">
-          <ScoreSparkline history={history} />
-          <div className="history-chart-labels"><span>0</span><span>50</span><span>100</span></div>
+        <div style={{ flex: 1, minWidth: 260 }}>
+          <ScoreSparkline history={history} large />
         </div>
         {diff?.has_baseline && (
           <div className={`diff-card ${diff.fixed_count >= diff.new_count ? "diff-improving" : "diff-regressing"}`}>
@@ -201,6 +368,14 @@ function BacklogView({ components, allIssues }) {
   const p1 = components.filter((c) => c.top_severity === "serious");
   const p2 = components.filter((c) => c.top_severity === "moderate" || c.top_severity === "minor");
   const count = (sev) => allIssues.filter((i) => i.severity === sev).length;
+  if (components.length === 0) {
+    return (
+      <div className="tab-empty">
+        <span className="tab-empty-title">No components found</span>
+        <p className="tab-empty-desc">Run a scan to see component-level accessibility issues grouped by priority.</p>
+      </div>
+    );
+  }
   return (
     <div className="backlog">
       <BacklogSection priority="P0" label="Fix Before Shipping"
@@ -220,7 +395,12 @@ function BacklogView({ components, allIssues }) {
 
 function ComponentsView({ components }) {
   if (!components || components.length === 0)
-    return <p className="muted">No components detected — run a scan first.</p>;
+    return (
+      <div className="tab-empty">
+        <span className="tab-empty-title">No components detected</span>
+        <p className="tab-empty-desc">Run a scan first to see components ranked by accessibility debt.</p>
+      </div>
+    );
   const maxDebt = Math.max(...components.map((c) => c.debt_score), 1);
   return (
     <div className="components-list">
@@ -288,15 +468,82 @@ const DIMENSION_ICONS = {
   content_organization: "📐",
 };
 
-function ScoreRing({ score }) {
-  const color = score >= 8 ? "#22c55e" : score >= 6 ? "#f59e0b" : "#ef4444";
+const HOLISTIC_STEPS = [
+  { key: "plain_language",       label: "Plain language & reading level" },
+  { key: "cognitive_load",       label: "Cognitive load & decision complexity" },
+  { key: "form_usability",       label: "Form usability & error prevention" },
+  { key: "navigation_structure", label: "Navigation structure & heading hierarchy" },
+  { key: "content_organization", label: "Content organization & scanability" },
+];
+
+function HolisticProgress() {
+  const [activeStep, setActiveStep] = useState(0);
+
+  useEffect(() => {
+    if (activeStep >= HOLISTIC_STEPS.length) return;
+    const delay = 2000 + Math.random() * 1500;
+    const t = setTimeout(() => setActiveStep((s) => s + 1), delay);
+    return () => clearTimeout(t);
+  }, [activeStep]);
+
   return (
-    <span className="dim-score" style={{ color }}>{score}<span className="dim-denom">/10</span></span>
+    <div className="holistic-progress">
+      <div className="holistic-progress-title">Running AI review… (may take 10–20 s)</div>
+      <div className="holistic-progress-steps" role="status" aria-label="Analysis progress">
+        {HOLISTIC_STEPS.map((step, i) => {
+          const isDone = i < activeStep;
+          const isActive = i === activeStep;
+          return (
+            <div
+              key={step.key}
+              className={`holistic-progress-step${isDone ? " step-done" : isActive ? " step-active" : ""}`}
+            >
+              <span className="step-icon" aria-hidden="true">
+                {isDone ? <span className="step-check">✓</span> : isActive ? <span className="spinner" /> : <span style={{ color: "var(--color-border)" }}>○</span>}
+              </span>
+              <span>{step.label}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
-function HolisticView({ scanId, review, loading, onRun }) {
-  if (loading) return <div className="holistic-loading">Running AI review… (may take 10–20 s)</div>;
+function ScoreRing({ score }) {
+  const cls = score >= 8 ? "dim-score-good" : score >= 6 ? "dim-score-warn" : "dim-score-bad";
+  return (
+    <span className={`dim-score ${cls}`}>{score}<span className="dim-denom">/10</span></span>
+  );
+}
+
+function HolisticView({ scanId, review, loading, onRun, error }) {
+  if (loading) return <HolisticProgress />;
+
+  if (error) {
+    if (error.includes("503") || error.toLowerCase().includes("groq")) {
+      return (
+        <div className="groq-callout">
+          <div className="groq-callout-title">AI features unavailable</div>
+          <p className="groq-callout-body">
+            AI features need a <code>GROQ_API_KEY</code> to run.{" "}
+            Get a free key at{" "}
+            <a href="https://console.groq.com" target="_blank" rel="noopener noreferrer">
+              console.groq.com
+            </a>
+            , then set it in your environment and restart the server.
+          </p>
+        </div>
+      );
+    }
+    return (
+      <div className="inline-error">
+        <span>Error: {error}</span>
+        <button className="inline-error-retry" onClick={onRun}>Retry</button>
+      </div>
+    );
+  }
+
   if (!review) return (
     <div className="holistic-empty">
       <p>AI holistic review evaluates what axe-core cannot detect:</p>
@@ -311,14 +558,38 @@ function HolisticView({ scanId, review, loading, onRun }) {
     </div>
   );
 
+  if (review.error) {
+    if (review.error.includes("503") || review.error.toLowerCase().includes("groq")) {
+      return (
+        <div className="groq-callout">
+          <div className="groq-callout-title">AI features unavailable</div>
+          <p className="groq-callout-body">
+            AI features need a <code>GROQ_API_KEY</code> to run.{" "}
+            Get a free key at{" "}
+            <a href="https://console.groq.com" target="_blank" rel="noopener noreferrer">
+              console.groq.com
+            </a>
+            , then set it in your environment and restart the server.
+          </p>
+        </div>
+      );
+    }
+    return (
+      <div className="inline-error">
+        <span>Error: {review.error}</span>
+        <button className="inline-error-retry" onClick={onRun}>Retry</button>
+      </div>
+    );
+  }
+
   const overall = review.overall ?? 0;
-  const overallColor = overall >= 70 ? "#22c55e" : overall >= 50 ? "#f59e0b" : "#ef4444";
+  const overallCls = overall >= 70 ? "holistic-overall-good" : overall >= 50 ? "holistic-overall-warn" : "holistic-overall-bad";
 
   return (
     <div className="holistic-view">
       <div className="holistic-header">
         <div className="holistic-overall">
-          <span className="holistic-score" style={{ color: overallColor }}>{overall}</span>
+          <span className={`holistic-score ${overallCls}`}>{overall}</span>
           <span className="holistic-score-label">/100 overall</span>
         </div>
         <div className="holistic-summary-block">
@@ -332,25 +603,25 @@ function HolisticView({ scanId, review, loading, onRun }) {
       </div>
 
       <div className="dimension-grid">
-        {(review.dimensions || []).map((d) => (
-          <div key={d.key} className="dimension-card">
-            <div className="dimension-header">
-              <span className="dimension-icon">{DIMENSION_ICONS[d.key] || "●"}</span>
-              <span className="dimension-name">{d.name}</span>
-              <ScoreRing score={d.score} />
+        {(review.dimensions || []).map((d) => {
+          const barCls = d.score >= 8 ? "dimension-bar-good" : d.score >= 6 ? "dimension-bar-warn" : "dimension-bar-bad";
+          return (
+            <div key={d.key} className="dimension-card">
+              <div className="dimension-header">
+                <span className="dimension-icon" aria-hidden="true">{DIMENSION_ICONS[d.key] || "●"}</span>
+                <span className="dimension-name">{d.name}</span>
+                <ScoreRing score={d.score} />
+              </div>
+              <div className="dimension-bar-track">
+                <div className={`dimension-bar-fill ${barCls}`} style={{ width: `${d.score * 10}%` }} />
+              </div>
+              <p className="dimension-finding">{d.finding}</p>
+              <div className="dimension-rec">
+                <span className="dimension-rec-label">Rec:</span> {d.recommendation}
+              </div>
             </div>
-            <div className="dimension-bar-track">
-              <div className="dimension-bar-fill" style={{
-                width: `${d.score * 10}%`,
-                background: d.score >= 8 ? "#22c55e" : d.score >= 6 ? "#f59e0b" : "#ef4444",
-              }} />
-            </div>
-            <p className="dimension-finding">{d.finding}</p>
-            <div className="dimension-rec">
-              <span className="dimension-rec-label">Rec:</span> {d.recommendation}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <button className="holistic-rerun-btn" onClick={onRun}>Re-run Review</button>
@@ -360,8 +631,28 @@ function HolisticView({ scanId, review, loading, onRun }) {
 
 // ── Issues table ──────────────────────────────────────────────────────────────
 
-function IssuesView({ pages, fixSuggestions, fixLoading, onGetFix }) {
-  return pages?.map((page) => {
+function IssuesView({ pages, fixSuggestions, fixLoading, fixErrors, onGetFix, scanStatus }) {
+  if (scanStatus === "running") {
+    return (
+      <div style={{ paddingTop: "var(--space-4)" }}>
+        <div className="skeleton-row" />
+        <div className="skeleton-row" />
+        <div className="skeleton-row" />
+      </div>
+    );
+  }
+
+  const allEmpty = pages?.every((p) => p.issues.length === 0);
+  if (!pages || pages.length === 0 || allEmpty) {
+    return (
+      <div className="tab-empty">
+        <span className="tab-empty-title">No issues found on scanned pages</span>
+        <p className="tab-empty-desc">All pages passed automated accessibility checks. Run a manual review for deeper coverage.</p>
+      </div>
+    );
+  }
+
+  return pages.map((page) => {
     const sorted = [...page.issues].sort(
       (a, b) => (SEVERITY_ORDER[a.severity] ?? 4) - (SEVERITY_ORDER[b.severity] ?? 4)
     );
@@ -377,6 +668,7 @@ function IssuesView({ pages, fixSuggestions, fixLoading, onGetFix }) {
               {sorted.map((issue) => {
                 const fix = fixSuggestions[issue.id];
                 const loading = fixLoading[issue.id];
+                const fixErr = fixErrors?.[issue.id];
                 return [
                   <tr key={issue.id} className={`sev-${issue.severity}`}>
                     <td><a href={issue.help_url} target="_blank" rel="noopener noreferrer">{issue.rule_id}</a></td>
@@ -389,13 +681,27 @@ function IssuesView({ pages, fixSuggestions, fixLoading, onGetFix }) {
                       </span>
                     </td>
                     <td>
-                      <button className={`get-fix-btn${fix ? " got-fix" : ""}`}
-                        onClick={() => !fix && onGetFix(issue.id)}
-                        disabled={loading || !!fix} title="Get AI fix suggestion">
-                        {loading ? "…" : fix ? "✦" : "Fix"}
-                      </button>
+                      {loading ? (
+                        <span className="skeleton-fix" />
+                      ) : (
+                        <button className={`get-fix-btn${fix ? " got-fix" : ""}`}
+                          onClick={() => !fix && onGetFix(issue.id)}
+                          disabled={loading || !!fix} title="Get AI fix suggestion">
+                          {fix ? "✦" : "Fix"}
+                        </button>
+                      )}
                     </td>
                   </tr>,
+                  fixErr && (
+                    <tr key={`${issue.id}-err`} className="fix-row">
+                      <td colSpan={6}>
+                        <div className="inline-error">
+                          <span>{fixErr}</span>
+                          <button className="inline-error-retry" onClick={() => onGetFix(issue.id)}>Retry</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ),
                   fix && (
                     <tr key={`${issue.id}-fix`} className="fix-row">
                       <td colSpan={6}>
@@ -419,10 +725,15 @@ function IssuesView({ pages, fixSuggestions, fixLoading, onGetFix }) {
 
 // ── Review queue ──────────────────────────────────────────────────────────────
 
-function ReviewView({ allIssues, issueStatuses, onStatusChange, fixSuggestions, fixLoading, onGetFix }) {
+function ReviewView({ allIssues, issueStatuses, onStatusChange, fixSuggestions, fixLoading, fixErrors, onGetFix }) {
   const items = allIssues.filter((i) => i.verification === "needs_manual");
   if (items.length === 0)
-    return <p className="muted">No manual review items — all issues were auto-verified.</p>;
+    return (
+      <div className="tab-empty">
+        <span className="tab-empty-title">No manual review items</span>
+        <p className="tab-empty-desc">All issues were auto-verified. No manual testing required for this scan.</p>
+      </div>
+    );
   const reviewed = items.filter((i) => (issueStatuses[i.id] ?? i.status) !== "open").length;
   const pct = Math.round((reviewed / items.length) * 100);
   return (
@@ -439,10 +750,11 @@ function ReviewView({ allIssues, issueStatuses, onStatusChange, fixSuggestions, 
         const isDone = status !== "open";
         const fix = fixSuggestions[issue.id];
         const loading = fixLoading[issue.id];
+        const fixErr = fixErrors?.[issue.id];
         return (
           <div key={issue.id} className={`review-item${isDone ? ` review-item-${status}` : ""}`}>
             <div className="review-item-header">
-              <span className={`review-dot dot-${status}`} />
+              <span className={`review-dot dot-${status}`} aria-hidden="true" />
               <a href={issue.help_url} target="_blank" rel="noopener noreferrer" className="review-rule-id">{issue.rule_id}</a>
               {wcag.length > 0 && <span className="mono small review-wcag">{wcag.join(" ")}</span>}
               <span className="mono small truncate review-selector" title={issue.selector}>{issue.selector}</span>
@@ -456,6 +768,12 @@ function ReviewView({ allIssues, issueStatuses, onStatusChange, fixSuggestions, 
                 <summary>HTML snippet</summary>
                 <pre className="review-snippet-code">{issue.html_snippet}</pre>
               </details>
+            )}
+            {fixErr && (
+              <div className="inline-error">
+                <span>{fixErr}</span>
+                <button className="inline-error-retry" onClick={() => onGetFix(issue.id)}>Retry</button>
+              </div>
             )}
             {fix && (
               <>
@@ -502,8 +820,40 @@ const CATEGORY_ICONS = {
   "Mobile": "📱",
 };
 
-function ManualChecklistView({ scanId, checklist, loading, checklistStatuses, onGenerate, onStatusChange }) {
-  if (loading) return <div className="checklist-loading">Generating checklist… (10–20 s)</div>;
+function ManualChecklistView({ scanId, checklist, loading, checklistError, checklistStatuses, onGenerate, onStatusChange }) {
+  if (loading) {
+    return (
+      <div style={{ paddingTop: "var(--space-4)" }}>
+        <div className="skeleton-card" />
+        <div className="skeleton-card" />
+        <div className="skeleton-card" />
+      </div>
+    );
+  }
+
+  if (checklistError) {
+    if (checklistError.includes("503") || checklistError.toLowerCase().includes("groq")) {
+      return (
+        <div className="groq-callout">
+          <div className="groq-callout-title">AI features unavailable</div>
+          <p className="groq-callout-body">
+            Checklist generation needs a <code>GROQ_API_KEY</code>.{" "}
+            Get a free key at{" "}
+            <a href="https://console.groq.com" target="_blank" rel="noopener noreferrer">
+              console.groq.com
+            </a>.
+          </p>
+        </div>
+      );
+    }
+    return (
+      <div className="inline-error">
+        <span>Error generating checklist: {checklistError}</span>
+        <button className="inline-error-retry" onClick={onGenerate}>Retry</button>
+      </div>
+    );
+  }
+
   if (checklist.length === 0)
     return (
       <div className="checklist-empty">
@@ -539,7 +889,7 @@ function ManualChecklistView({ scanId, checklist, loading, checklistStatuses, on
         return (
           <div key={cat} className="checklist-category">
             <div className="checklist-cat-header">
-              <span className="checklist-cat-icon">{CATEGORY_ICONS[cat] || "●"}</span>
+              <span className="checklist-cat-icon" aria-hidden="true">{CATEGORY_ICONS[cat] || "●"}</span>
               <span className="checklist-cat-name">{cat}</span>
               <span className="checklist-cat-count">{items.length} {items.length === 1 ? "item" : "items"}</span>
             </div>
@@ -586,9 +936,42 @@ function ManualChecklistView({ scanId, checklist, loading, checklistStatuses, on
 
 // ── Compliance report ─────────────────────────────────────────────────────────
 
-function ComplianceReportView({ report, loading, onGenerate }) {
+function ComplianceReportView({ report, loading, reportError, onGenerate }) {
   const copy = (text) => navigator.clipboard.writeText(text).catch(() => {});
-  if (loading) return <div className="report-loading">Generating compliance report… (10–15 s)</div>;
+
+  if (loading) {
+    return (
+      <div style={{ paddingTop: "var(--space-4)" }}>
+        <div className="skeleton-card" style={{ height: 60 }} />
+        <div className="skeleton-card" />
+        <div className="skeleton-card" />
+      </div>
+    );
+  }
+
+  if (reportError) {
+    if (reportError.includes("503") || reportError.toLowerCase().includes("groq")) {
+      return (
+        <div className="groq-callout">
+          <div className="groq-callout-title">AI features unavailable</div>
+          <p className="groq-callout-body">
+            Report generation needs a <code>GROQ_API_KEY</code>.{" "}
+            Get a free key at{" "}
+            <a href="https://console.groq.com" target="_blank" rel="noopener noreferrer">
+              console.groq.com
+            </a>.
+          </p>
+        </div>
+      );
+    }
+    return (
+      <div className="inline-error">
+        <span>Error generating report: {reportError}</span>
+        <button className="inline-error-retry" onClick={onGenerate}>Retry</button>
+      </div>
+    );
+  }
+
   if (!report)
     return (
       <div className="report-empty">
@@ -603,10 +986,32 @@ function ComplianceReportView({ report, loading, onGenerate }) {
         <button className="report-generate-btn" onClick={onGenerate}>Generate Report</button>
       </div>
     );
-  if (report.error) return <p className="error">Error: {report.error}</p>;
 
-  const riskColor = { HIGH: "#ef4444", MEDIUM: "#f59e0b", LOW: "#22c55e" }[report.risk] || "#94a3b8";
-  const scoreColor = report.score >= 80 ? "#22c55e" : report.score >= 60 ? "#f59e0b" : "#ef4444";
+  if (report.error) {
+    if (report.error.includes("503") || report.error.toLowerCase().includes("groq")) {
+      return (
+        <div className="groq-callout">
+          <div className="groq-callout-title">AI features unavailable</div>
+          <p className="groq-callout-body">
+            Report generation needs a <code>GROQ_API_KEY</code>.{" "}
+            Get a free key at{" "}
+            <a href="https://console.groq.com" target="_blank" rel="noopener noreferrer">
+              console.groq.com
+            </a>.
+          </p>
+        </div>
+      );
+    }
+    return (
+      <div className="inline-error">
+        <span>Error: {report.error}</span>
+        <button className="inline-error-retry" onClick={onGenerate}>Retry</button>
+      </div>
+    );
+  }
+
+  const scoreCls = report.score >= 80 ? "report-score-good" : report.score >= 60 ? "report-score-warn" : "report-score-bad";
+  const riskCls = { HIGH: "report-risk-high", MEDIUM: "report-risk-medium", LOW: "report-risk-low" }[report.risk] || "";
 
   return (
     <div className="report-view">
@@ -616,8 +1021,8 @@ function ComplianceReportView({ report, loading, onGenerate }) {
           <span className="report-meta-sep">·</span>
           <span className="report-date">{report.scan_date}</span>
           <span className="report-meta-sep">·</span>
-          <span className="report-score-inline" style={{ color: scoreColor }}>{report.score}/100</span>
-          <span className="report-risk-inline" style={{ color: riskColor }}>{report.risk} risk</span>
+          <span className={`report-score-inline ${scoreCls}`}>{report.score}/100</span>
+          <span className={`report-risk-inline ${riskCls}`}>{report.risk} risk</span>
         </div>
         <div className="report-counts-row">
           <span className="count-critical">{report.counts?.critical ?? 0} critical</span>
@@ -685,6 +1090,7 @@ function ComplianceReportView({ report, loading, onGenerate }) {
 // ── Main app ──────────────────────────────────────────────────────────────────
 
 export default function App() {
+  const [theme, toggleTheme] = useTheme();
   const [urlsText, setUrlsText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [scanId, setScanId] = useState(null);
@@ -694,17 +1100,21 @@ export default function App() {
   const [issueStatuses, setIssueStatuses] = useState({});
   const [fixSuggestions, setFixSuggestions] = useState({});
   const [fixLoading, setFixLoading] = useState({});
+  const [fixErrors, setFixErrors] = useState({});
   const [history, setHistory] = useState([]);
   const [diff, setDiff] = useState(null);
   const [holisticReview, setHolisticReview] = useState(null);
   const [holisticLoading, setHolisticLoading] = useState(false);
+  const [holisticError, setHolisticError] = useState(null);
   // Checklist
   const [checklist, setChecklist] = useState([]);
   const [checklistLoading, setChecklistLoading] = useState(false);
+  const [checklistError, setChecklistError] = useState(null);
   const [checklistStatuses, setChecklistStatuses] = useState({});
   // Compliance report
   const [complianceReport, setComplianceReport] = useState(null);
   const [complianceReportLoading, setComplianceReportLoading] = useState(false);
+  const [reportError, setReportError] = useState(null);
   // Sitemap
   const [sitemapLoading, setSitemapLoading] = useState(false);
   const [sitemapUrls, setSitemapUrls] = useState(null);
@@ -747,12 +1157,16 @@ export default function App() {
     setIssueStatuses({});
     setFixSuggestions({});
     setFixLoading({});
+    setFixErrors({});
     setHistory([]);
     setDiff(null);
     setHolisticReview(null);
+    setHolisticError(null);
     setChecklist([]);
     setChecklistStatuses({});
+    setChecklistError(null);
     setComplianceReport(null);
+    setReportError(null);
     try {
       let baseUrl = urls[0];
       try { baseUrl = new URL(urls[0]).origin; } catch { /* as-is */ }
@@ -821,6 +1235,7 @@ export default function App() {
 
   const handleGetFix = async (issueId) => {
     setFixLoading((p) => ({ ...p, [issueId]: true }));
+    setFixErrors((p) => { const n = { ...p }; delete n[issueId]; return n; });
     try {
       const res = await fetch(`/api/issues/${issueId}/suggest-fix`, { method: "POST" });
       if (!res.ok) {
@@ -830,7 +1245,7 @@ export default function App() {
       const data = await res.json();
       setFixSuggestions((p) => ({ ...p, [issueId]: { text: data.suggestion, wcag: data.wcag_context || [] } }));
     } catch (err) {
-      setFixSuggestions((p) => ({ ...p, [issueId]: { text: `Error: ${err.message}`, wcag: [] } }));
+      setFixErrors((p) => ({ ...p, [issueId]: err.message }));
     } finally {
       setFixLoading((p) => ({ ...p, [issueId]: false }));
     }
@@ -838,6 +1253,7 @@ export default function App() {
 
   const handleHolisticReview = async () => {
     setHolisticLoading(true);
+    setHolisticError(null);
     try {
       const res = await fetch(`/api/scans/${scanId}/holistic-review`, { method: "POST" });
       if (!res.ok) {
@@ -846,7 +1262,7 @@ export default function App() {
       }
       setHolisticReview(await res.json());
     } catch (err) {
-      setHolisticReview({ error: err.message });
+      setHolisticError(err.message);
     } finally {
       setHolisticLoading(false);
     }
@@ -854,6 +1270,7 @@ export default function App() {
 
   const handleGenerateChecklist = async () => {
     setChecklistLoading(true);
+    setChecklistError(null);
     try {
       const res = await fetch(`/api/scans/${scanId}/manual-checklist`, { method: "POST" });
       if (!res.ok) {
@@ -862,8 +1279,8 @@ export default function App() {
       }
       const data = await res.json();
       setChecklist(data.items || []);
-    } catch {
-      /* checklist-empty state stays visible */
+    } catch (err) {
+      setChecklistError(err.message);
     } finally {
       setChecklistLoading(false);
     }
@@ -884,6 +1301,7 @@ export default function App() {
 
   const handleGenerateComplianceReport = async () => {
     setComplianceReportLoading(true);
+    setReportError(null);
     try {
       const res = await fetch(`/api/scans/${scanId}/compliance-report`, { method: "POST" });
       if (!res.ok) {
@@ -892,7 +1310,7 @@ export default function App() {
       }
       setComplianceReport(await res.json());
     } catch (err) {
-      setComplianceReport({ error: err.message });
+      setReportError(err.message);
     } finally {
       setComplianceReportLoading(false);
     }
@@ -908,20 +1326,22 @@ export default function App() {
   const checklistDone = checklist.filter((c) => (checklistStatuses[c.id] ?? c.status) !== "pending").length;
 
   const tabs = [
-    { id: "backlog", label: "Backlog" },
-    { id: "components", label: `Components (${components.length})` },
-    { id: "issues", label: `Issues (${allIssues.length})` },
-    { id: "review", label: `Review (${needsManual})` },
-    { id: "ai-review", label: "AI Review" },
-    { id: "checklist", label: `Checklist${checklist.length > 0 ? ` (${checklistDone}/${checklist.length})` : ""}` },
-    { id: "report", label: "Report" },
-    { id: "history", label: `History${history.length > 1 ? ` (${history.length})` : ""}` },
+    { id: "backlog",     label: "Backlog" },
+    { id: "components",  label: `Components (${components.length})` },
+    { id: "issues",      label: `Issues (${allIssues.length})` },
+    { id: "review",      label: `Review (${needsManual})` },
+    { id: "ai-review",   label: "AI Review" },
+    { id: "checklist",   label: `Checklist${checklist.length > 0 ? ` (${checklistDone}/${checklist.length})` : ""}` },
+    { id: "report",      label: "Report" },
+    { id: "history",     label: `History${history.length > 1 ? ` (${history.length})` : ""}` },
   ];
 
   return (
     <div className="container">
+      <ThemeToggle theme={theme} onToggle={toggleTheme} />
+
       <h1>Accessibility Compliance Copilot</h1>
-      <p className="tagline">Component-level a11y audit — honest about what automation can and can't cover.</p>
+      <p className="tagline">Component-level a11y audit — honest about what automation can and can&apos;t cover.</p>
 
       <form onSubmit={handleSubmit} className="scan-form">
         <div className="scan-inputs">
@@ -932,10 +1352,16 @@ export default function App() {
               onChange={(e) => setUrlsText(e.target.value)}
               rows={3}
               disabled={submitting}
+              aria-label="URLs to scan, one per line"
             />
             <button type="submit"
               disabled={submitting || urls.length === 0 || (scan && scan.status === "running")}>
-              {submitting ? "Starting…" : scan?.status === "running" ? "Scanning…"
+              {submitting ? (
+                <span style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+                  <span className="spinner" />
+                  Starting…
+                </span>
+              ) : scan?.status === "running" ? "Scanning…"
                 : urls.length > 1 ? `Scan (${urls.length})` : "Scan"}
             </button>
           </div>
@@ -947,7 +1373,8 @@ export default function App() {
             </button>
             {sitemapError && <span className="sitemap-error">{sitemapError}</span>}
             <button type="button" className="advanced-toggle"
-              onClick={() => setShowAdvanced((v) => !v)}>
+              onClick={() => setShowAdvanced((v) => !v)}
+              aria-expanded={showAdvanced}>
               {showAdvanced ? "▾ Advanced" : "▸ Advanced"}
             </button>
           </div>
@@ -978,9 +1405,25 @@ export default function App() {
         />
       )}
 
-      {submitError && <p className="error">Error: {submitError}</p>}
+      {submitError && (
+        <div className="scan-error-card" role="alert">
+          <p className="scan-error-message">Scan failed: {submitError}</p>
+          <button className="scan-error-retry" onClick={() => setSubmitError(null)}>
+            Try again
+          </button>
+        </div>
+      )}
 
-      {scan && (
+      {scan && scan.status === "queued" && (
+        <div className="status-row status-running">
+          <div className="status-queued-row">
+            <span className="spinner" />
+            <span>Setting up scan…</span>
+          </div>
+        </div>
+      )}
+
+      {scan && scan.status !== "queued" && (
         <div className="results">
           <div className={`status-row status-${scan.status}`}>
             <span className="status-label">Status: <strong>{scan.status}</strong></span>
@@ -1001,15 +1444,42 @@ export default function App() {
                 <span className="count-manual">{needsManual} need manual review</span>
               </span>
             )}
-            {scan.error && <span className="error"> — {scan.error}</span>}
+            {scan.status === "failed" && (
+              <span className="error">
+                {scan.error ? ` — ${scan.error}` : " — Scan failed"}
+              </span>
+            )}
+            {scan.status === "running" && (
+              <span className="status-queued-row">
+                <span className="spinner" aria-hidden="true" />
+              </span>
+            )}
           </div>
+
+          {scan.status === "failed" && (
+            <div className="scan-error-card" role="alert">
+              <p className="scan-error-message">
+                {scan.error || "The scan encountered an error. Check that all URLs are reachable and try again."}
+              </p>
+              <button className="scan-error-retry" onClick={() => { setScan(null); setScanId(null); }}>
+                Try again
+              </button>
+            </div>
+          )}
 
           {isDone && (
             <div className="toolbar">
-              <div className="view-tabs">
+              <div className="view-tabs" role="tablist">
                 {tabs.map((t) => (
-                  <button key={t.id} className={`tab-btn${view === t.id ? " active" : ""}`}
-                    onClick={() => setView(t.id)}>{t.label}</button>
+                  <button
+                    key={t.id}
+                    role="tab"
+                    aria-selected={view === t.id}
+                    className={`tab-btn${view === t.id ? " active" : ""}`}
+                    onClick={() => setView(t.id)}
+                  >
+                    {t.label}
+                  </button>
                 ))}
               </div>
               <div className="export-row">
@@ -1022,20 +1492,42 @@ export default function App() {
 
           {isDone && view === "backlog" && <BacklogView components={components} allIssues={allIssues} />}
           {isDone && view === "components" && <ComponentsView components={components} />}
-          {view === "issues" && <IssuesView pages={scan.pages} fixSuggestions={fixSuggestions} fixLoading={fixLoading} onGetFix={handleGetFix} />}
+          {view === "issues" && (
+            <IssuesView
+              pages={scan.pages}
+              fixSuggestions={fixSuggestions}
+              fixLoading={fixLoading}
+              fixErrors={fixErrors}
+              onGetFix={handleGetFix}
+              scanStatus={scan.status}
+            />
+          )}
           {isDone && view === "review" && (
-            <ReviewView allIssues={allIssues} issueStatuses={issueStatuses} onStatusChange={handleIssueStatus}
-              fixSuggestions={fixSuggestions} fixLoading={fixLoading} onGetFix={handleGetFix} />
+            <ReviewView
+              allIssues={allIssues}
+              issueStatuses={issueStatuses}
+              onStatusChange={handleIssueStatus}
+              fixSuggestions={fixSuggestions}
+              fixLoading={fixLoading}
+              fixErrors={fixErrors}
+              onGetFix={handleGetFix}
+            />
           )}
           {isDone && view === "ai-review" && (
-            <HolisticView scanId={scanId} review={holisticLoading ? null : holisticReview}
-              loading={holisticLoading} onRun={handleHolisticReview} />
+            <HolisticView
+              scanId={scanId}
+              review={holisticLoading ? null : holisticReview}
+              loading={holisticLoading}
+              error={holisticError}
+              onRun={handleHolisticReview}
+            />
           )}
           {isDone && view === "checklist" && (
             <ManualChecklistView
               scanId={scanId}
               checklist={checklist}
               loading={checklistLoading}
+              checklistError={checklistError}
               checklistStatuses={checklistStatuses}
               onGenerate={handleGenerateChecklist}
               onStatusChange={handleChecklistStatus}
@@ -1045,6 +1537,7 @@ export default function App() {
             <ComplianceReportView
               report={complianceReportLoading ? null : complianceReport}
               loading={complianceReportLoading}
+              reportError={reportError}
               onGenerate={handleGenerateComplianceReport}
             />
           )}
