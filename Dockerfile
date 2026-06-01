@@ -36,4 +36,6 @@ COPY backend/ ./
 COPY --from=frontend-build /app/frontend/dist ./public
 
 EXPOSE 8000
-CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
+# `exec` so uvicorn replaces the shell and receives SIGTERM directly
+# (graceful shutdown on Render). Shell form kept for ${PORT} expansion.
+CMD exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}

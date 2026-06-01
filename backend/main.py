@@ -1394,4 +1394,9 @@ if os.environ.get("NODE_ENV") == "production" and os.path.isdir(_PUBLIC):
 
     @app.get("/{full_path:path}")
     def serve_spa(full_path: str):
+        # Unmatched API routes must return a JSON 404, not the SPA shell —
+        # otherwise a client fetch to a typo'd endpoint gets HTML and a
+        # confusing parse error instead of a clean 404.
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not found")
         return FileResponse(os.path.join(_PUBLIC, "index.html"))
