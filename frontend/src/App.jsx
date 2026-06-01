@@ -5,6 +5,12 @@ const SEVERITY_ORDER = { critical: 0, serious: 1, moderate: 2, minor: 3 };
 function parseJson(raw) {
   try { return JSON.parse(raw || "[]"); } catch { return []; }
 }
+// Convert raw axe wcag_criteria tags to readable SC numbers: ["wcag2aa","wcag143"] → ["1.4.3"]
+function formatWcagCriteria(raw) {
+  return parseJson(raw)
+    .filter((t) => t.startsWith("wcag") && /^\d{3,}$/.test(t.slice(4)))
+    .map((t) => { const d = t.slice(4); return `${d[0]}.${d[1]}.${d.slice(2)}`; });
+}
 function parseUrls(text) {
   return text.split("\n").map((u) => u.trim()).filter((u) => u.length > 0);
 }
@@ -671,7 +677,7 @@ function IssuesView({ pages, fixSuggestions, fixLoading, fixErrors, onGetFix, sc
                   <tr key={issue.id} className={`sev-${issue.severity}`}>
                     <td><a href={issue.help_url} target="_blank" rel="noopener noreferrer">{issue.rule_id}</a></td>
                     <td><span className={`badge badge-sev-${issue.severity}`}>{issue.severity}</span></td>
-                    <td className="mono small">{parseJson(issue.wcag_criteria).join(" ")}</td>
+                    <td className="mono small">{formatWcagCriteria(issue.wcag_criteria).join(" ") || "—"}</td>
                     <td className="mono small truncate">{issue.selector}</td>
                     <td>
                       <span className={`badge ${issue.verification === "auto" ? "badge-auto" : "badge-manual"}`}>
@@ -744,7 +750,7 @@ function ReviewView({ allIssues, issueStatuses, onStatusChange, fixSuggestions, 
       </div>
       {items.map((issue) => {
         const status = issueStatuses[issue.id] ?? issue.status;
-        const wcag = parseJson(issue.wcag_criteria);
+        const wcag = formatWcagCriteria(issue.wcag_criteria);
         const isDone = status !== "open";
         const fix = fixSuggestions[issue.id];
         const loading = fixLoading[issue.id];
@@ -1153,7 +1159,7 @@ export default function App() {
       setDiff(diffData);
       setChecklist(checklistData.items || []);
     }).catch(() => {});
-  }, [scan?.status]);
+  }, [scan?.status, scanId]);
 
   const handleIssueStatus = async (issueId, newStatus) => {
     setIssueStatuses((p) => ({ ...p, [issueId]: newStatus }));
@@ -1404,6 +1410,13 @@ export default function App() {
 
           {isDone && (
             <div className="toolbar">
+              <div className="toolbar-top">
+                <div className="export-row">
+                  <a href={`/api/scans/${scanId}/export/csv`} className="export-btn" download>CSV</a>
+                  <a href={`/api/scans/${scanId}/export/markdown`} className="export-btn" download>MD</a>
+                  <a href={`/api/scans/${scanId}/export/pdf`} className="export-btn export-btn-pdf" download>PDF</a>
+                </div>
+              </div>
               <div className="view-tabs" role="tablist">
                 {tabs.map((t) => (
                   <button
@@ -1416,11 +1429,6 @@ export default function App() {
                     {t.label}
                   </button>
                 ))}
-              </div>
-              <div className="export-row">
-                <a href={`/api/scans/${scanId}/export/csv`} className="export-btn" download>CSV</a>
-                <a href={`/api/scans/${scanId}/export/markdown`} className="export-btn" download>MD</a>
-                <a href={`/api/scans/${scanId}/export/pdf`} className="export-btn export-btn-pdf" download>PDF</a>
               </div>
             </div>
           )}
