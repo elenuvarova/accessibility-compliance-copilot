@@ -1,0 +1,9 @@
+{
+  "name": "scan-worker",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@axe-core/playwright": "^4.10.1",
+    "playwright": "^1.49.1"
+  }
+}

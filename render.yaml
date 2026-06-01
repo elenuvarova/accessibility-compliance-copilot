@@ -1,0 +1,24 @@
+databases:
+  - name: a11y-copilot-db
+    plan: free
+    databaseName: a11y
+    user: a11y
+
+services:
+  - type: web
+    name: a11y-copilot
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 8000
+      - key: DATABASE_URL
+        fromDatabase:
+          name: a11y-copilot-db
+          property: connectionString
+      - key: GROQ_API_KEY
+        sync: false
