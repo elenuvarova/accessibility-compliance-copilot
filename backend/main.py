@@ -367,8 +367,11 @@ _PDF_WORKER = os.path.join(
 
 
 def _migrate_db() -> None:
-    if db_kind != "sqlite":
-        return
+    # Runs on BOTH SQLite (local) and Postgres (prod). SQLModel.create_all only
+    # creates missing tables, never ALTERs existing ones, so columns added to a
+    # model after a table already exists must be hand-migrated here — otherwise
+    # queries that SELECT the new column 500 against the older table.
+    is_postgres = db_kind != "sqlite"
     new_cols = [
         ("page_title", "TEXT NOT NULL DEFAULT ''"),
         ("headings_text", "TEXT NOT NULL DEFAULT ''"),
@@ -377,13 +380,20 @@ def _migrate_db() -> None:
     ]
     with engine.connect() as conn:
         for col, typedef in new_cols:
+            # Postgres supports idempotent ADD COLUMN IF NOT EXISTS (no error on
+            # re-run). SQLite (pre-3.35) doesn't, so it relies on the try/except.
+            if is_postgres:
+                stmt = f"ALTER TABLE page ADD COLUMN IF NOT EXISTS {col} {typedef}"
+            else:
+                stmt = f"ALTER TABLE page ADD COLUMN {col} {typedef}"
             try:
-                conn.execute(_sql_text(f"ALTER TABLE page ADD COLUMN {col} {typedef}"))
+                conn.execute(_sql_text(stmt))
                 conn.commit()
             except Exception as exc:
+                conn.rollback()  # Postgres aborts the txn on error — reset it.
                 # Expected when the column already exists; log anything else.
                 msg = str(exc).lower()
-                if "duplicate column" not in msg:
+                if "duplicate column" not in msg and "already exists" not in msg:
                     logger.warning("migrate add-column %s failed: %s", col, exc)
         # SQLModel won't add indexes to a pre-existing table, so hand-create the
         # foreign-key indexes that hot queries filter on.
@@ -401,6 +411,7 @@ def _migrate_db() -> None:
                 )
                 conn.commit()
             except Exception as exc:
+                conn.rollback()
                 logger.warning("migrate create-index %s failed: %s", name, exc)
 
 
