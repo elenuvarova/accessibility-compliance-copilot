@@ -19,18 +19,7 @@
     <meta property="og:type" content="website" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/favicon.svg" />
-    <script>
-      // Pre-paint theme: apply stored theme before React mounts to avoid a flash.
-      // Mirrors useTheme() in App.jsx — key "a11y-theme", light => data-theme="light", dark => "".
-      (function () {
-        try {
-          var t = localStorage.getItem("a11y-theme") || "dark";
-          document.documentElement.setAttribute("data-theme", t === "light" ? "light" : "");
-        } catch (e) {
-          document.documentElement.setAttribute("data-theme", "");
-        }
-      })();
-    </script>
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>
