@@ -74,8 +74,28 @@ Open [http://localhost:5173](http://localhost:5173). The Vite dev server proxies
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/api/health` | Returns `{ status: "ok", db: "sqlite" or "postgres" }` |
-| `GET` | `/api/hello` | Smoke test |
 | `POST` | `/api/projects` | Create a project `{ name, base_url }` |
-| `POST` | `/api/scans` | Start a scan `{ project_id, urls: [...] }` — async, poll for result |
+| `POST` | `/api/scans` | Start a scan `{ project_id, urls: [...] }` — async, poll for result (max 25 URLs) |
 | `GET` | `/api/scans/:id` | Poll scan status, issues, and components |
 | `GET` | `/api/projects/:id/components` | Components for latest scan, sorted by debt score |
+
+## Optional API protection
+
+By default the API is **open** so local development and the public demo work with
+no auth. To lock it down in production, set `APP_API_KEY` in the backend
+environment. When set, all mutating and AI/cost endpoints (`POST`/`PATCH`
+`/api/scans`, `/api/projects`, `/suggest-fix`, `/holistic-review`,
+`/compliance-report`, `/manual-checklist`, and the issue/check `PATCH` routes)
+require the key via either header:
+
+```text
+Authorization: Bearer <key>
+X-API-Key: <key>
+```
+
+To make the frontend send it automatically, set `VITE_API_KEY` to the same value
+at build time. Read-only export and poll endpoints stay open. The server also
+applies SSRF validation on all fetched URLs, escapes scanned-page content in the
+PDF report, wraps untrusted page text in the AI prompts, sets security headers
+(CSP, `X-Frame-Options`, `nosniff`), and rate-limits the AI endpoints. See
+`.env.example` for all options.

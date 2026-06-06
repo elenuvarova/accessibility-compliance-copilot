@@ -2,8 +2,11 @@ import { chromium } from "playwright";
 import { readFileSync } from "fs";
 
 const htmlFile = process.argv[2];
+// The report contains no JavaScript; disabling JS in the renderer neutralizes
+// any script that could be injected via scanned-page-controlled report values.
+const noJs = process.argv.includes("--no-js");
 if (!htmlFile) {
-  process.stderr.write("Usage: node pdf-worker.js <html-file>\n");
+  process.stderr.write("Usage: node pdf-worker.js <html-file> [--no-js]\n");
   process.exit(1);
 }
 
@@ -14,7 +17,8 @@ const browser = await chromium.launch({
 });
 
 try {
-  const page = await browser.newPage();
+  const context = await browser.newContext({ javaScriptEnabled: !noJs });
+  const page = await context.newPage();
   await page.setContent(html, { waitUntil: "domcontentloaded" });
   const pdf = await page.pdf({
     format: "A4",

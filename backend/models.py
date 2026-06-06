@@ -22,17 +22,18 @@ class Scan(SQLModel, table=True):
 
 class Page(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    scan_id: int = Field(foreign_key="scan.id")
+    scan_id: int = Field(foreign_key="scan.id", index=True)
     url: str
     business_criticality: int = 3
     page_title: str = ""
     headings_text: str = ""   # newline-separated h1-h6 texts
     body_text: str = ""       # first 3000 chars of body innerText
+    error: str = ""           # short, safe reason if this page failed to scan
 
 
 class Issue(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    page_id: int = Field(foreign_key="page.id")
+    page_id: int = Field(foreign_key="page.id", index=True)
     rule_id: str
     wcag_criteria: str = ""   # JSON-encoded list of wcag* tags
     severity: str             # critical | serious | moderate | minor
@@ -55,7 +56,7 @@ class WcagChunk(SQLModel, table=True):
 
 class ManualCheck(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    scan_id: int = Field(foreign_key="scan.id")
+    scan_id: int = Field(foreign_key="scan.id", index=True)
     category: str = ""          # Screen Reader | Keyboard | Visual | Forms | Cognitive | Mobile
     criterion_id: str = ""      # e.g. "1.1.1"
     description: str = ""
@@ -66,8 +67,8 @@ class ManualCheck(SQLModel, table=True):
 
 class Component(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    project_id: int = Field(foreign_key="project.id")
-    scan_id: int = Field(foreign_key="scan.id")
+    project_id: int = Field(foreign_key="project.id", index=True)
+    scan_id: int = Field(foreign_key="scan.id", index=True)
     signature: str = ""          # normalized selector — grouping key
     name: str = ""               # human-readable guess
     sample_selector: str = ""    # raw selector for display

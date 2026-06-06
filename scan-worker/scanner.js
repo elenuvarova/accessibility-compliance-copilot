@@ -1,5 +1,7 @@
 import { chromium } from "playwright";
 import AxeBuilder from "@axe-core/playwright";
+import { lookup } from "dns/promises";
+import net from "net";
 
 const args = process.argv.slice(2);
 const url = args[0];
@@ -8,6 +10,55 @@ const cookiesStr = cookiesIdx !== -1 ? args[cookiesIdx + 1] : null;
 
 if (!url) {
   process.stderr.write("Usage: node scanner.js <url> [--cookies <json>]\n");
+  process.exit(1);
+}
+
+// SSRF guard (defense in depth — the API also validates before spawning).
+// Block non-http(s) schemes and hostnames that resolve to non-public IPs,
+// re-checked after navigation since a page can redirect to an internal host.
+function ipIsBlocked(ip) {
+  if (net.isIPv4(ip)) {
+    const o = ip.split(".").map(Number);
+    if (o[0] === 10) return true;
+    if (o[0] === 127) return true;
+    if (o[0] === 0) return true;
+    if (o[0] === 169 && o[1] === 254) return true; // link-local / metadata
+    if (o[0] === 172 && o[1] >= 16 && o[1] <= 31) return true;
+    if (o[0] === 192 && o[1] === 168) return true;
+    if (o[0] >= 224) return true; // multicast / reserved
+    return false;
+  }
+  const v = ip.toLowerCase();
+  if (v === "::1" || v === "::") return true;
+  if (v.startsWith("fe80") || v.startsWith("fc") || v.startsWith("fd")) return true;
+  return false;
+}
+
+async function assertUrlSafe(rawUrl) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error("invalid URL");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("blocked URL scheme");
+  }
+  const host = parsed.hostname;
+  if (net.isIP(host)) {
+    if (ipIsBlocked(host)) throw new Error("blocked non-public address");
+    return;
+  }
+  const results = await lookup(host, { all: true });
+  for (const { address } of results) {
+    if (ipIsBlocked(address)) throw new Error("blocked non-public address");
+  }
+}
+
+try {
+  await assertUrlSafe(url);
+} catch (err) {
+  process.stderr.write("URL rejected: " + err.message + "\n");
   process.exit(1);
 }
 
@@ -50,6 +101,9 @@ const page = await context.newPage();
 
 try {
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+
+  // Redirects may have landed us on an internal host — re-validate the final URL.
+  await assertUrlSafe(page.url());
 
   const meta = await page.evaluate(() => {
     const headings = Array.from(

@@ -2,6 +2,18 @@ import { useState, useEffect, useRef, useCallback } from "react";
 
 const SEVERITY_ORDER = { critical: 0, serious: 1, moderate: 2, minor: 3 };
 
+// Optional API key for locked-down deployments. Unset locally / on the open
+// demo, so no header is sent and the backend stays open. Set VITE_API_KEY at
+// build time (matching the backend's APP_API_KEY) to protect the API.
+const API_KEY = import.meta.env.VITE_API_KEY || "";
+
+// Thin wrapper over fetch that injects the API key header when one is configured.
+function apiFetch(url, options = {}) {
+  if (!API_KEY) return fetch(url, options);
+  const headers = { ...(options.headers || {}), "X-API-Key": API_KEY };
+  return fetch(url, { ...options, headers });
+}
+
 function parseJson(raw) {
   try { return JSON.parse(raw || "[]"); } catch { return []; }
 }
@@ -18,6 +30,35 @@ function legalRisk(counts) {
   if (counts.critical > 0 || counts.serious >= 10) return "high";
   if (counts.serious > 0) return "medium";
   return "low";
+}
+
+// ── Inline icons (Lucide-style stroke paths, no dependency) ───────────────────
+// Rendered decoratively; callers wrap them next to a visible text label, so the
+// SVG itself is aria-hidden.
+const ICON_PATHS = {
+  // Dimensions
+  "plain_language": <><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" /></>, // book
+  "cognitive_load": <><path d="M12 5a3 3 0 1 0-5.997.142 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" /><path d="M12 5a3 3 0 1 1 5.997.142 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" /></>, // brain
+  "form_usability": <><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></>, // pencil/edit
+  "navigation_structure": <><circle cx="12" cy="12" r="10" /><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" /></>, // compass
+  "content_organization": <><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /></>, // layout/grid
+  // Checklist categories
+  "Screen Reader": <><path d="M3 9v6h4l5 5V4L7 9H3z" /><path d="M16 8a5 5 0 0 1 0 8" /></>, // volume / audio
+  "Keyboard": <><rect x="2" y="6" width="20" height="12" rx="2" /><path d="M6 10h0M10 10h0M14 10h0M18 10h0M8 14h8" /></>, // keyboard
+  "Visual": <><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" /></>, // eye
+  "Forms": <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6M9 13h6M9 17h4" /></>, // file-text
+  "Cognitive": <><path d="M12 5a3 3 0 1 0-5.997.142 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" /><path d="M12 5a3 3 0 1 1 5.997.142 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" /></>, // brain
+  "Mobile": <><rect x="5" y="2" width="14" height="20" rx="2" /><path d="M12 18h.01" /></>, // smartphone
+};
+
+function Icon({ name }) {
+  const path = ICON_PATHS[name];
+  if (!path) return null;
+  return (
+    <svg className="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      {path}
+    </svg>
+  );
 }
 
 const RULE_GUIDANCE = {
@@ -67,7 +108,18 @@ function ThemeToggle({ theme, onToggle }) {
       aria-label={theme === "light" ? "Switch to dark theme" : "Switch to light theme"}
       title={theme === "light" ? "Switch to dark theme" : "Switch to light theme"}
     >
-      {theme === "light" ? "○" : "●"}
+      {theme === "light" ? (
+        // moon — click to go dark
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z" />
+        </svg>
+      ) : (
+        // sun — click to go light
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+        </svg>
+      )}
     </button>
   );
 }
@@ -94,16 +146,69 @@ function LegalRiskBadge({ counts }) {
 function SitemapPicker({ urls, onSelect, onClose }) {
   const [checked, setChecked] = useState(() => new Set(urls.slice(0, 20)));
   const toggle = (u) => setChecked((s) => { const n = new Set(s); n.has(u) ? n.delete(u) : n.add(u); return n; });
+  const modalRef = useRef(null);
+  const titleId = "sitemap-dialog-title";
+
+  // Lock body scroll, restore focus on close, trap Tab, close on Escape.
+  useEffect(() => {
+    const previouslyFocused = document.activeElement;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    // Move focus into the dialog.
+    const focusFirst = () => {
+      const node = modalRef.current;
+      if (!node) return;
+      const focusable = node.querySelector(
+        'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      );
+      (focusable || node).focus();
+    };
+    focusFirst();
+
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); onClose(); return; }
+      if (e.key !== "Tab") return;
+      const node = modalRef.current;
+      if (!node) return;
+      const focusable = [...node.querySelectorAll(
+        'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )].filter((el) => el.offsetParent !== null);
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault(); last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault(); first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = prevOverflow;
+      if (previouslyFocused && previouslyFocused.focus) previouslyFocused.focus();
+    };
+  }, [onClose]);
+
   return (
     <div className="sitemap-overlay" onClick={onClose}>
-      <div className="sitemap-modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="sitemap-modal"
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="sitemap-modal-header">
-          <span>Found {urls.length} URLs</span>
+          <span id={titleId}>Found {urls.length} URLs</span>
           <div className="sitemap-actions">
             <button className="smap-btn" onClick={() => setChecked(new Set(urls))}>All</button>
             <button className="smap-btn" onClick={() => setChecked(new Set())}>None</button>
           </div>
-          <button className="sitemap-close" onClick={onClose} aria-label="Close">✕</button>
+          <button className="sitemap-close" onClick={onClose} aria-label="Close dialog">✕</button>
         </div>
         <div className="sitemap-list">
           {urls.map((u) => (
@@ -310,7 +415,9 @@ function HistoryView({ history, diff, currentScanId }) {
           <div className="diff-card diff-first">First scan — no baseline yet.</div>
         )}
       </div>
+      <div className="table-scroll">
       <table className="history-table">
+        <caption className="visually-hidden">Score and issue counts for each completed scan</caption>
         <thead>
           <tr><th>Scan</th><th>Date</th><th>Score</th><th>Total</th><th>Critical</th><th>Serious</th><th>Mod.</th><th>Minor</th></tr>
         </thead>
@@ -329,6 +436,7 @@ function HistoryView({ history, diff, currentScanId }) {
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
@@ -465,14 +573,6 @@ function WcagContextBlock({ chunks }) {
 }
 
 // ── Holistic AI review ────────────────────────────────────────────────────────
-
-const DIMENSION_ICONS = {
-  plain_language: "📖",
-  cognitive_load: "🧠",
-  form_usability: "📝",
-  navigation_structure: "🧭",
-  content_organization: "📐",
-};
 
 const HOLISTIC_STEPS = [
   { key: "plain_language",       label: "Plain language & reading level" },
@@ -612,7 +712,7 @@ function HolisticView({ scanId, review, loading, onRun, error }) {
           return (
             <div key={d.key} className="dimension-card">
               <div className="dimension-header">
-                <span className="dimension-icon" aria-hidden="true">{DIMENSION_ICONS[d.key] || "●"}</span>
+                <span className="dimension-icon"><Icon name={d.key} /></span>
                 <span className="dimension-name">{d.name}</span>
                 <ScoreRing score={d.score} />
               </div>
@@ -638,7 +738,7 @@ function HolisticView({ scanId, review, loading, onRun, error }) {
 function IssuesView({ pages, fixSuggestions, fixLoading, fixErrors, onGetFix, scanStatus }) {
   if (scanStatus === "running") {
     return (
-      <div style={{ paddingTop: "var(--space-4)" }}>
+      <div className="skeleton-wrap">
         <div className="skeleton-row" />
         <div className="skeleton-row" />
         <div className="skeleton-row" />
@@ -662,11 +762,13 @@ function IssuesView({ pages, fixSuggestions, fixLoading, fixErrors, onGetFix, sc
     );
     return (
       <div key={page.id} className="page-block">
-        <h2 className="page-url">{page.url}</h2>
+        <h3 className="page-url">{page.url}</h3>
         {sorted.length === 0 ? <p className="muted">No issues on this page.</p> : (
+          <div className="table-scroll">
           <table>
+            <caption className="visually-hidden">Accessibility issues found on {page.url}</caption>
             <thead>
-              <tr><th>Rule</th><th>Severity</th><th>WCAG</th><th>Selector</th><th>Coverage</th><th></th></tr>
+              <tr><th>Rule</th><th>Severity</th><th>WCAG</th><th>Selector</th><th>Coverage</th><th><span className="visually-hidden">AI fix</span></th></tr>
             </thead>
             <tbody>
               {sorted.map((issue) => {
@@ -721,6 +823,7 @@ function IssuesView({ pages, fixSuggestions, fixLoading, fixErrors, onGetFix, sc
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     );
@@ -815,19 +918,10 @@ function ReviewView({ allIssues, issueStatuses, onStatusChange, fixSuggestions, 
 
 // ── Manual testing checklist ──────────────────────────────────────────────────
 
-const CATEGORY_ICONS = {
-  "Screen Reader": "🔊",
-  "Keyboard": "⌨",
-  "Visual": "👁",
-  "Forms": "📋",
-  "Cognitive": "🧠",
-  "Mobile": "📱",
-};
-
 function ManualChecklistView({ scanId, checklist, loading, checklistError, checklistStatuses, onGenerate, onStatusChange }) {
   if (loading) {
     return (
-      <div style={{ paddingTop: "var(--space-4)" }}>
+      <div className="skeleton-wrap">
         <div className="skeleton-card" />
         <div className="skeleton-card" />
         <div className="skeleton-card" />
@@ -872,7 +966,7 @@ function ManualChecklistView({ scanId, checklist, loading, checklistError, check
         return (
           <div key={cat} className="checklist-category">
             <div className="checklist-cat-header">
-              <span className="checklist-cat-icon" aria-hidden="true">{CATEGORY_ICONS[cat] || "●"}</span>
+              <span className="checklist-cat-icon"><Icon name={cat} /></span>
               <span className="checklist-cat-name">{cat}</span>
               <span className="checklist-cat-count">{items.length} {items.length === 1 ? "item" : "items"}</span>
             </div>
@@ -924,7 +1018,7 @@ function ComplianceReportView({ report, loading, reportError, onGenerate }) {
 
   if (loading) {
     return (
-      <div style={{ paddingTop: "var(--space-4)" }}>
+      <div className="skeleton-wrap">
         <div className="skeleton-card" style={{ height: 60 }} />
         <div className="skeleton-card" />
         <div className="skeleton-card" />
@@ -1073,7 +1167,7 @@ export default function App() {
     setSitemapError(null);
     setSitemapUrls(null);
     try {
-      const res = await fetch(`/api/sitemap?url=${encodeURIComponent(first)}`);
+      const res = await apiFetch(`/api/sitemap?url=${encodeURIComponent(first)}`);
       if (!res.ok) {
         const e = await res.json().catch(() => ({ detail: "Not found" }));
         throw new Error(e.detail);
@@ -1111,7 +1205,7 @@ export default function App() {
     try {
       let baseUrl = urls[0];
       try { baseUrl = new URL(urls[0]).origin; } catch { /* as-is */ }
-      const projRes = await fetch("/api/projects", {
+      const projRes = await apiFetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: "Quick scan", base_url: baseUrl }),
@@ -1120,7 +1214,7 @@ export default function App() {
       const proj = await projRes.json();
       const body = { project_id: proj.id, urls };
       if (cookies.trim()) body.cookies = cookies.trim();
-      const scanRes = await fetch("/api/scans", {
+      const scanRes = await apiFetch("/api/scans", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -1139,7 +1233,7 @@ export default function App() {
     if (!scanId) return;
     const timer = setInterval(async () => {
       try {
-        const res = await fetch(`/api/scans/${scanId}`);
+        const res = await apiFetch(`/api/scans/${scanId}`);
         const data = await res.json();
         setScan(data);
         if (data.status === "done" || data.status === "failed") clearInterval(timer);
@@ -1151,9 +1245,9 @@ export default function App() {
   useEffect(() => {
     if (!scan || scan.status !== "done" || !scan.project_id) return;
     Promise.all([
-      fetch(`/api/projects/${scan.project_id}/history`).then((r) => r.json()),
-      fetch(`/api/scans/${scanId}/diff`).then((r) => r.json()),
-      fetch(`/api/scans/${scanId}/manual-checklist`).then((r) => r.json()),
+      apiFetch(`/api/projects/${scan.project_id}/history`).then((r) => r.json()),
+      apiFetch(`/api/scans/${scanId}/diff`).then((r) => r.json()),
+      apiFetch(`/api/scans/${scanId}/manual-checklist`).then((r) => r.json()),
     ]).then(([hist, diffData, checklistData]) => {
       setHistory(hist);
       setDiff(diffData);
@@ -1164,7 +1258,7 @@ export default function App() {
   const handleIssueStatus = async (issueId, newStatus) => {
     setIssueStatuses((p) => ({ ...p, [issueId]: newStatus }));
     try {
-      await fetch(`/api/issues/${issueId}`, {
+      await apiFetch(`/api/issues/${issueId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: newStatus }),
@@ -1178,7 +1272,7 @@ export default function App() {
     setFixLoading((p) => ({ ...p, [issueId]: true }));
     setFixErrors((p) => { const n = { ...p }; delete n[issueId]; return n; });
     try {
-      const res = await fetch(`/api/issues/${issueId}/suggest-fix`, { method: "POST" });
+      const res = await apiFetch(`/api/issues/${issueId}/suggest-fix`, { method: "POST" });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: res.statusText }));
         throw new Error(err.detail || res.statusText);
@@ -1196,7 +1290,7 @@ export default function App() {
     setHolisticLoading(true);
     setHolisticError(null);
     try {
-      const res = await fetch(`/api/scans/${scanId}/holistic-review`, { method: "POST" });
+      const res = await apiFetch(`/api/scans/${scanId}/holistic-review`, { method: "POST" });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: res.statusText }));
         throw new Error(err.detail || res.statusText);
@@ -1213,7 +1307,7 @@ export default function App() {
     setChecklistLoading(true);
     setChecklistError(null);
     try {
-      const res = await fetch(`/api/scans/${scanId}/manual-checklist`, { method: "POST" });
+      const res = await apiFetch(`/api/scans/${scanId}/manual-checklist`, { method: "POST" });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: res.statusText }));
         throw new Error(err.detail || res.statusText);
@@ -1230,7 +1324,7 @@ export default function App() {
   const handleChecklistStatus = async (checkId, newStatus) => {
     setChecklistStatuses((p) => ({ ...p, [checkId]: newStatus }));
     try {
-      await fetch(`/api/manual-checks/${checkId}`, {
+      await apiFetch(`/api/manual-checks/${checkId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: newStatus }),
@@ -1244,7 +1338,7 @@ export default function App() {
     setComplianceReportLoading(true);
     setReportError(null);
     try {
-      const res = await fetch(`/api/scans/${scanId}/compliance-report`, { method: "POST" });
+      const res = await apiFetch(`/api/scans/${scanId}/compliance-report`, { method: "POST" });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: res.statusText }));
         throw new Error(err.detail || res.statusText);
@@ -1267,15 +1361,34 @@ export default function App() {
   const checklistDone = checklist.filter((c) => (checklistStatuses[c.id] ?? c.status) !== "pending").length;
 
   const tabs = [
-    { id: "backlog",     label: "Backlog" },
-    { id: "components",  label: `Components (${components.length})` },
-    { id: "issues",      label: `Issues (${allIssues.length})` },
-    { id: "review",      label: `Review (${needsManual})` },
-    { id: "ai-review",   label: "AI Review" },
-    { id: "checklist",   label: `Checklist${checklist.length > 0 ? ` (${checklistDone}/${checklist.length})` : ""}` },
-    { id: "report",      label: "Report" },
-    { id: "history",     label: `History${history.length > 1 ? ` (${history.length})` : ""}` },
+    { id: "backlog",     label: "Backlog",      heading: "Prioritized backlog" },
+    { id: "components",  label: `Components (${components.length})`, heading: "Components ranked by accessibility debt" },
+    { id: "issues",      label: `Issues (${allIssues.length})`,     heading: "Automated issues by page" },
+    { id: "review",      label: `Review (${needsManual})`,          heading: "Manual review queue" },
+    { id: "ai-review",   label: "AI Review",    heading: "AI holistic review" },
+    { id: "checklist",   label: `Checklist${checklist.length > 0 ? ` (${checklistDone}/${checklist.length})` : ""}`, heading: "Manual testing checklist" },
+    { id: "report",      label: "Report",       heading: "Compliance report" },
+    { id: "history",     label: `History${history.length > 1 ? ` (${history.length})` : ""}`, heading: "Scan history" },
   ];
+
+  const activeTab = tabs.find((t) => t.id === view) ?? tabs[0];
+
+  // Roving arrow-key navigation across the tablist (WAI-ARIA tabs pattern).
+  const handleTabKeyDown = (e) => {
+    const idx = tabs.findIndex((t) => t.id === view);
+    let next = idx;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (idx + 1) % tabs.length;
+    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (idx - 1 + tabs.length) % tabs.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = tabs.length - 1;
+    else return;
+    e.preventDefault();
+    setView(tabs[next].id);
+    requestAnimationFrame(() => {
+      const node = document.getElementById(`tab-${tabs[next].id}`);
+      if (node) node.focus();
+    });
+  };
 
   return (
     <div className="container">
@@ -1298,8 +1411,8 @@ export default function App() {
             <button type="submit"
               disabled={submitting || urls.length === 0 || (scan && scan.status === "running")}>
               {submitting ? (
-                <span style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-                  <span className="spinner" />
+                <span className="btn-inline">
+                  <span className="spinner" aria-hidden="true" />
                   Starting…
                 </span>
               ) : scan?.status === "running" ? "Scanning…"
@@ -1417,14 +1530,18 @@ export default function App() {
                   <a href={`/api/scans/${scanId}/export/pdf`} className="export-btn export-btn-pdf" download>PDF</a>
                 </div>
               </div>
-              <div className="view-tabs" role="tablist">
+              <div className="view-tabs" role="tablist" aria-label="Scan result views">
                 {tabs.map((t) => (
                   <button
                     key={t.id}
+                    id={`tab-${t.id}`}
                     role="tab"
                     aria-selected={view === t.id}
+                    aria-controls={`panel-${t.id}`}
+                    tabIndex={view === t.id ? 0 : -1}
                     className={`tab-btn${view === t.id ? " active" : ""}`}
                     onClick={() => setView(t.id)}
+                    onKeyDown={handleTabKeyDown}
                   >
                     {t.label}
                   </button>
@@ -1433,59 +1550,71 @@ export default function App() {
             </div>
           )}
 
-          {isDone && view === "backlog" && <BacklogView components={components} allIssues={allIssues} />}
-          {isDone && view === "components" && <ComponentsView components={components} />}
-          {view === "issues" && (
-            <IssuesView
-              pages={scan.pages}
-              fixSuggestions={fixSuggestions}
-              fixLoading={fixLoading}
-              fixErrors={fixErrors}
-              onGetFix={handleGetFix}
-              scanStatus={scan.status}
-            />
-          )}
-          {isDone && view === "review" && (
-            <ReviewView
-              allIssues={allIssues}
-              issueStatuses={issueStatuses}
-              onStatusChange={handleIssueStatus}
-              fixSuggestions={fixSuggestions}
-              fixLoading={fixLoading}
-              fixErrors={fixErrors}
-              onGetFix={handleGetFix}
-            />
-          )}
-          {isDone && view === "ai-review" && (
-            <HolisticView
-              scanId={scanId}
-              review={holisticLoading ? null : holisticReview}
-              loading={holisticLoading}
-              error={holisticError}
-              onRun={handleHolisticReview}
-            />
-          )}
-          {isDone && view === "checklist" && (
-            <ManualChecklistView
-              scanId={scanId}
-              checklist={checklist}
-              loading={checklistLoading}
-              checklistError={checklistError}
-              checklistStatuses={checklistStatuses}
-              onGenerate={handleGenerateChecklist}
-              onStatusChange={handleChecklistStatus}
-            />
-          )}
-          {isDone && view === "report" && (
-            <ComplianceReportView
-              report={complianceReportLoading ? null : complianceReport}
-              loading={complianceReportLoading}
-              reportError={reportError}
-              onGenerate={handleGenerateComplianceReport}
-            />
-          )}
-          {isDone && view === "history" && (
-            <HistoryView history={history} diff={diff} currentScanId={scanId} />
+          {isDone && (
+            <div
+              className="tab-panel"
+              id={`panel-${activeTab.id}`}
+              role="tabpanel"
+              aria-labelledby={`tab-${activeTab.id}`}
+              tabIndex={0}
+            >
+              <h2 className="visually-hidden">{activeTab.heading}</h2>
+
+              {view === "backlog" && <BacklogView components={components} allIssues={allIssues} />}
+              {view === "components" && <ComponentsView components={components} />}
+              {view === "issues" && (
+                <IssuesView
+                  pages={scan.pages}
+                  fixSuggestions={fixSuggestions}
+                  fixLoading={fixLoading}
+                  fixErrors={fixErrors}
+                  onGetFix={handleGetFix}
+                  scanStatus={scan.status}
+                />
+              )}
+              {view === "review" && (
+                <ReviewView
+                  allIssues={allIssues}
+                  issueStatuses={issueStatuses}
+                  onStatusChange={handleIssueStatus}
+                  fixSuggestions={fixSuggestions}
+                  fixLoading={fixLoading}
+                  fixErrors={fixErrors}
+                  onGetFix={handleGetFix}
+                />
+              )}
+              {view === "ai-review" && (
+                <HolisticView
+                  scanId={scanId}
+                  review={holisticLoading ? null : holisticReview}
+                  loading={holisticLoading}
+                  error={holisticError}
+                  onRun={handleHolisticReview}
+                />
+              )}
+              {view === "checklist" && (
+                <ManualChecklistView
+                  scanId={scanId}
+                  checklist={checklist}
+                  loading={checklistLoading}
+                  checklistError={checklistError}
+                  checklistStatuses={checklistStatuses}
+                  onGenerate={handleGenerateChecklist}
+                  onStatusChange={handleChecklistStatus}
+                />
+              )}
+              {view === "report" && (
+                <ComplianceReportView
+                  report={complianceReportLoading ? null : complianceReport}
+                  loading={complianceReportLoading}
+                  reportError={reportError}
+                  onGenerate={handleGenerateComplianceReport}
+                />
+              )}
+              {view === "history" && (
+                <HistoryView history={history} diff={diff} currentScanId={scanId} />
+              )}
+            </div>
           )}
         </div>
       )}

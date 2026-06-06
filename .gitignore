@@ -7,6 +7,8 @@ build/
 .DS_Store
 *.sqlite
 *.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
 
 # Python
 __pycache__/
@@ -17,3 +19,6 @@ venv/
 env/
 env/
 *.egg-info/
+
+# Playwright MCP scratch
+.playwright-mcp/
