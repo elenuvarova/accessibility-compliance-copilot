@@ -257,6 +257,11 @@
 }
 
 /* ── Base ─────────────────────────────────────────────────────────────────── */
+/* The page itself never scrolls sideways at any width — wide data tables scroll
+   inside their own .table-scroll container, so no content is lost. `clip` on the
+   root is the reliable form (it doesn't establish a scroll container the way
+   `hidden` does, so position:sticky etc. keep working). */
+html, body { overflow-x: clip; }
 body {
   background: var(--color-bg);
   color: var(--color-text);
@@ -287,11 +292,21 @@ body {
   position: relative;
 }
 
-/* ── Theme toggle ─────────────────────────────────────────────────────────── */
-.theme-toggle {
+/* ── Header controls (Tour + theme toggle, top-right) ─────────────────────── */
+/* The wrapper is absolutely positioned so the controls float over the masthead
+   without taking layout space; flex keeps them side by side and right-aligned. */
+.header-controls {
   position: absolute;
   top: 0;
   right: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  z-index: 1;
+}
+
+/* ── Theme toggle ─────────────────────────────────────────────────────────── */
+.theme-toggle {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -316,6 +331,14 @@ body {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
 }
+
+/* Tour trigger reuses .theme-toggle but is auto-width to fit its "Tour" label. */
+.tour-trigger {
+  width: auto;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+}
+.tour-trigger-label { font-size: var(--text-sm); font-weight: 500; }
 
 /* ── Typography ───────────────────────────────────────────────────────────── */
 h1 {
@@ -1923,6 +1946,136 @@ td a:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px;
 /* Padding wrapper used by skeleton loading states (was an inline style). */
 .skeleton-wrap { padding-top: var(--space-4); }
 
+/* ── Guided tour ──────────────────────────────────────────────────────────── */
+/* Sits above everything, including the sitemap modal (z-index 100). */
+.tour-root {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+}
+
+@keyframes tour-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes tour-pop {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Dim the page; clicking it skips the tour. For tethered steps the ring's own
+   spread shadow does the dimming (a "cutout" around the target), so this flat
+   backdrop stays transparent to avoid double-darkening — it remains present for
+   the click-to-skip hit area. For untethered (centered) steps there is no ring,
+   so this backdrop carries the dim itself. */
+.tour-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, .62);
+  animation: tour-fade .2s ease;
+}
+.tour-root.has-ring .tour-backdrop { background: transparent; }
+
+/* Spotlight ring around the current target — an outline, never colour alone.
+   A large spread shadow re-dims the area outside the ring so the target reads
+   as lifted (a cutout) without needing real clip-path geometry. */
+.tour-ring {
+  position: fixed;
+  border: 2px solid var(--color-focus);
+  border-radius: var(--radius-md);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, .62), 0 0 0 4px color-mix(in srgb, var(--color-focus) 35%, transparent);
+  pointer-events: none;
+  transition: left var(--transition-base), top var(--transition-base), width var(--transition-base), height var(--transition-base);
+}
+
+.tour-popover {
+  position: fixed;
+  width: min(320px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  animation: tour-pop .2s ease;
+}
+
+.tour-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.tour-step-count {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .03em;
+}
+.tour-skip {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  padding: var(--space-1) var(--space-1);
+  border-radius: var(--radius-sm);
+}
+.tour-skip:hover { color: var(--color-text-secondary); }
+.tour-skip:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+
+.tour-title {
+  font-size: var(--text-lg);
+  font-weight: 700;
+  letter-spacing: -.01em;
+  line-height: var(--lh-tight);
+  color: var(--color-text);
+  margin: 0;
+}
+.tour-body {
+  font-size: var(--text-base);
+  color: var(--color-text-secondary);
+  line-height: var(--lh-relaxed);
+  margin: 0;
+}
+
+.tour-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+.tour-btn {
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-base);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), opacity var(--transition-fast);
+}
+.tour-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.tour-btn-ghost {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+}
+.tour-btn-ghost:hover:not(:disabled) { border-color: var(--color-border-hover); color: var(--color-text); }
+.tour-btn-ghost:disabled { opacity: .4; cursor: not-allowed; }
+.tour-btn-primary {
+  background: var(--color-blue-btn);
+  border: 1px solid var(--color-blue-btn);
+  color: #fff;
+  margin-left: auto;
+}
+.tour-btn-primary:hover { opacity: .88; }
+
+@media (pointer: coarse) {
+  .tour-btn, .tour-skip { min-height: 44px; }
+}
+
 /* ── Reduced motion (WCAG 2.3.3 / 2.2.2) ─────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -1931,6 +2084,10 @@ td a:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px;
     transition-duration: .01ms !important;
   }
   .sparkline-path { animation: none; stroke-dashoffset: 0; }
+  /* Tour: no fade/pop on backdrop or popover, and the ring snaps to its target
+     instead of sliding between steps. */
+  .tour-backdrop, .tour-popover { animation: none; }
+  .tour-ring { transition: none; }
 }
 
 /* ── Coarse-pointer tap targets (WCAG 2.5.5 / 2.5.8) ──────────────────────── */
@@ -1955,11 +2112,6 @@ td a:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px;
 
 /* ── Responsive ───────────────────────────────────────────────────────────── */
 @media (max-width: 640px) {
-  /* Belt-and-suspenders: the page itself never scrolls sideways on phones.
-     `overflow-x: clip` on the root is the reliable form (hidden on <body>
-     propagates unpredictably). Wide data tables still scroll inside their
-     own .table-scroll container, so no content is lost. */
-  html, body { overflow-x: clip; }
   body { padding: var(--space-4); }
   .tab-btn { font-size: var(--text-xs); padding: var(--space-1) var(--space-2); }
   .score-sparkline { width: 100%; }

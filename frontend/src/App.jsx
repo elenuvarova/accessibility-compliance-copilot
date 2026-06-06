@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import Tour, { TOUR_STEPS, TOUR_SEEN_KEY } from "./Tour.jsx";
 
 const SEVERITY_ORDER = { critical: 0, serious: 1, moderate: 2, minor: 3 };
 
@@ -172,6 +173,27 @@ function ThemeToggle({ theme, onToggle }) {
     </button>
   );
 }
+
+// ── Tour trigger ──────────────────────────────────────────────────────────────
+// Reuses the theme-toggle sizing/styling so the two header controls match.
+
+const TourButton = ({ onClick, buttonRef }) => (
+  <button
+    type="button"
+    className="theme-toggle tour-trigger"
+    onClick={onClick}
+    ref={buttonRef}
+    aria-label="Take a tour"
+    title="Take a tour"
+  >
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+      <path d="M12 17h.01" />
+    </svg>
+    <span className="tour-trigger-label">Tour</span>
+  </button>
+);
 
 // ── Badges ────────────────────────────────────────────────────────────────────
 
@@ -1257,6 +1279,8 @@ function ComplianceReportView({ report, loading, reportError, onGenerate }) {
 
 export default function App() {
   const [theme, toggleTheme] = useTheme();
+  const [tourOpen, setTourOpen] = useState(false);
+  const tourTriggerRef = useRef(null);
   const [urlsText, setUrlsText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [scanId, setScanId] = useState(null);
@@ -1290,6 +1314,24 @@ export default function App() {
   const [cookies, setCookies] = useState("");
 
   const urls = parseUrls(urlsText);
+
+  // Auto-start the tour on a user's FIRST visit only — and only on the clean
+  // landing (no scan started this session). The header Tour button replays it
+  // anytime regardless of the flag. Runs once on mount.
+  useEffect(() => {
+    let seen = false;
+    try { seen = !!localStorage.getItem(TOUR_SEEN_KEY); } catch { /* ignore */ }
+    if (seen || scanId) return;
+    const t = setTimeout(() => setTourOpen(true), 600);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const startTour = () => setTourOpen(true);
+  const closeTour = useCallback(() => {
+    setTourOpen(false);
+    try { localStorage.setItem(TOUR_SEEN_KEY, "1"); } catch { /* ignore */ }
+  }, []);
 
   const handleDiscover = async () => {
     const first = urls[0] || urlsText.trim();
@@ -1526,7 +1568,14 @@ export default function App() {
 
   return (
     <div className="container">
-      <ThemeToggle theme={theme} onToggle={toggleTheme} />
+      <div className="header-controls">
+        <TourButton onClick={startTour} buttonRef={tourTriggerRef} />
+        <ThemeToggle theme={theme} onToggle={toggleTheme} />
+      </div>
+
+      {tourOpen && (
+        <Tour steps={TOUR_STEPS} onClose={closeTour} returnFocusRef={tourTriggerRef} />
+      )}
 
       <header className="masthead">
         <div className="brand-lockup">
