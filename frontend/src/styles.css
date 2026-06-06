@@ -641,6 +641,7 @@ h1 {
   color: var(--color-blue-bright);
   margin-bottom: var(--space-2);
   font-weight: normal;
+  overflow-wrap: anywhere;
 }
 /* Inline, muted notice for a page the crawler couldn't scan (rest of scan still succeeds) */
 .page-scan-error {
@@ -1899,6 +1900,7 @@ td a:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px;
 .table-scroll {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+  max-width: 100%;
 }
 .table-scroll > table { min-width: 560px; }
 .table-scroll > .history-table { min-width: 640px; }
@@ -1938,15 +1940,24 @@ td a:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px;
 
 /* ── Responsive ───────────────────────────────────────────────────────────── */
 @media (max-width: 640px) {
+  /* Belt-and-suspenders: the page itself never scrolls sideways on phones.
+     `overflow-x: clip` on the root is the reliable form (hidden on <body>
+     propagates unpredictably). Wide data tables still scroll inside their
+     own .table-scroll container, so no content is lost. */
+  html, body { overflow-x: clip; }
   body { padding: var(--space-4); }
   .tab-btn { font-size: var(--text-xs); padding: var(--space-1) var(--space-2); }
   .score-sparkline { width: 100%; }
   .history-sparkline-container { width: 100%; }
   .export-row { flex-wrap: wrap; }
 
-  /* Scan input stacks; button becomes full-width so it never crushes at 320px */
+  /* Scan input stacks; the Scan button becomes full-width so it never crushes
+     at 320px. Scope to the input row only — a blanket .scan-form button rule
+     also stretched Discover + Advanced and pushed Advanced off the right edge. */
   .url-row { flex-direction: column; }
-  .scan-form button { width: 100%; }
+  .url-row button { width: 100%; }
+  /* Tools row wraps instead of overflowing if Discover + Advanced don't fit */
+  .scan-tools-row { flex-wrap: wrap; row-gap: var(--space-2); }
 
   /* Group score/risk badges on their own row; let the count list wrap below */
   .status-row { gap: var(--space-2) var(--space-3); }
