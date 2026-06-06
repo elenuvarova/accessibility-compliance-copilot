@@ -620,8 +620,13 @@ h1 {
 .count-minor    { color: var(--color-text-secondary); }
 .count-manual   { color: var(--color-purple-light); }
 .count-errored  { color: var(--color-warning-text); }
+/* Needs-review tally — neutral (info blue), never a severity colour */
+.count-review   { color: var(--color-info-text); }
+/* Calm "no confirmed violations" reading */
+.count-clear    { color: var(--color-success-text); }
 /* Dim the dots on the lower-signal counts */
 .count-minor::before,
+.count-review::before,
 .count-manual::before { opacity: .6; }
 
 /* Queued/running indicator */
@@ -682,6 +687,8 @@ td a:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px;
 .sev-serious  td { border-left: 3px solid var(--color-serious); }
 .sev-moderate td { border-left: 3px solid var(--color-moderate); }
 .sev-minor    td { border-left: 3px solid var(--color-minor); }
+/* Needs-review rows get a neutral (blue) marker, not a severity tint */
+.sev-review   td { border-left: 3px solid var(--color-blue); }
 
 /* ── Badges ───────────────────────────────────────────────────────────────── */
 .badge {
@@ -698,6 +705,8 @@ td a:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px;
 .badge-sev-minor    { background: var(--color-minor-bg);     color: var(--color-minor-text); }
 .badge-auto         { background: var(--color-success-bg);   color: var(--color-success-text); }
 .badge-manual       { background: var(--color-purple-2-bg);  color: var(--color-purple-2); }
+/* Neutral "review" chip — incomplete/needs-manual, never a confirmed severity */
+.badge-review       { background: var(--color-info-bg);      color: var(--color-info-text); border: 1px solid var(--color-blue-border); }
 
 /* Legal risk badge */
 .legal-risk-badge {
@@ -822,6 +831,7 @@ td a:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px;
 .top-sev-serious  { border-left-color: var(--color-serious); }
 .top-sev-moderate { border-left-color: var(--color-moderate); }
 .top-sev-minor    { border-left-color: var(--color-minor); }
+.top-sev-review   { border-left-color: var(--color-blue); }
 
 .component-rank {
   color: var(--color-text-muted);
@@ -847,6 +857,7 @@ td a:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px;
 .top-sev-serious  .debt-bar-fill { background: var(--color-serious); }
 .top-sev-moderate .debt-bar-fill { background: var(--color-moderate); }
 .top-sev-minor    .debt-bar-fill { background: var(--color-minor); }
+.top-sev-review   .debt-bar-fill { background: var(--color-blue); }
 .component-meta {
   display: flex;
   gap: var(--space-4);
@@ -930,6 +941,7 @@ td a:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px;
 .backlog-critical { border-top: 3px solid var(--color-critical); }
 .backlog-serious  { border-top: 3px solid var(--color-serious); }
 .backlog-moderate { border-top: 3px solid var(--color-moderate); }
+.backlog-review   { border-top: 3px solid var(--color-blue); }
 
 .backlog-section-header {
   display: flex;
@@ -962,6 +974,8 @@ td a:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px;
 .priority-serious  { background: var(--color-serious-bg);   color: var(--color-serious-text); }
 .priority-moderate { background: var(--color-moderate-bg);  color: var(--color-moderate-text); }
 .priority-minor    { background: var(--color-minor-bg);     color: var(--color-minor-text); }
+/* Neutral review band — incomplete checks, not confirmed violations */
+.priority-review   { background: var(--color-info-bg);      color: var(--color-info-text); border: 1px solid var(--color-blue-border); }
 
 .legal-badge {
   background: var(--color-purple-2-bg);
@@ -994,6 +1008,7 @@ td a:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px;
 .backlog-item-sev { flex-shrink: 0; }
 .backlog-item-name { font-weight: 500; min-width: 140px; }
 .backlog-item-issues { color: var(--color-text-secondary); font-size: var(--text-sm); min-width: 70px; flex-shrink: 0; }
+.backlog-item-verify { color: var(--color-text-muted); }
 .backlog-item-rules { color: var(--color-text-muted); font-size: var(--text-xs); flex: 1; }
 
 /* ── Manual review queue ──────────────────────────────────────────────────── */

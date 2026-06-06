@@ -62,6 +62,54 @@ class TestComputeReleaseScore:
         assert main._compute_release_score(worst) == 0
 
 
+# ── verification-aware aggregation (incomplete vs confirmed) ───────────────────
+
+class TestConfirmedAggregation:
+    def test_needs_manual_does_not_penalize_score(self):
+        # A page with only incomplete items (needs_manual) must score a perfect
+        # 100 — incomplete findings are not confirmed violations.
+        issues = [{"severity": "serious", "verification": "needs_manual"}] * 36
+        assert main._compute_release_score(issues) == 100
+
+    def test_severity_counts_exclude_needs_manual(self):
+        issues = [
+            {"severity": "critical", "verification": "auto"},
+            {"severity": "serious", "verification": "needs_manual"},
+            {"severity": "serious", "verification": "needs_manual"},
+            {"severity": "minor", "verification": "auto"},
+        ]
+        counts = main._severity_counts(issues)
+        assert counts == {"critical": 1, "serious": 0, "moderate": 0, "minor": 1}
+
+    def test_needs_review_count(self):
+        issues = [
+            {"severity": "critical", "verification": "auto"},
+            {"severity": "serious", "verification": "needs_manual"},
+            {"severity": "serious", "verification": "needs_manual"},
+        ]
+        assert main._needs_review_count(issues) == 2
+
+    def test_is_confirmed_defaults_to_auto_when_missing(self):
+        # Safety: a record with no verification attr is treated as confirmed.
+        assert main._is_confirmed({"severity": "minor"}) is True
+
+        class _I:
+            severity = "minor"
+        assert main._is_confirmed(_I()) is True
+
+    def test_is_confirmed_object_form(self):
+        class _I:
+            severity = "serious"
+            verification = "needs_manual"
+        assert main._is_confirmed(_I()) is False
+
+    def test_legal_risk_low_when_no_confirmed_high(self):
+        # 0 confirmed critical/serious -> LOW even with many incomplete items.
+        issues = [{"severity": "serious", "verification": "needs_manual"}] * 36
+        c = main._severity_counts(issues)
+        assert main._legal_risk_level(c["critical"], c["serious"]) == "LOW"
+
+
 # ── _wcag_sc_from_tag ──────────────────────────────────────────────────────────
 
 class TestWcagScFromTag:
@@ -162,3 +210,13 @@ class TestGuessComponentName:
         # An unrecognized signature still produces a non-empty label.
         assert main._guess_component_name(".some-class")
         assert main._guess_component_name("xyz")
+
+    def test_marquee_class_maps_to_human_name(self):
+        # Framework-prefixed marquee classes all resolve to "Marquee".
+        assert main._guess_component_name("div.v-marquee") == "Marquee"
+        assert main._guess_component_name("div.vmarquee") == "Marquee"
+        assert main._guess_component_name(".js-marquee__inner") == "Marquee"
+
+    def test_structural_noise_class_falls_back_to_tag(self):
+        # "split-inner" carries no semantic meaning -> use the tag label.
+        assert main._guess_component_name("div.split-inner") == "Div"

@@ -372,20 +372,23 @@ def _migrate_db() -> None:
     # model after a table already exists must be hand-migrated here — otherwise
     # queries that SELECT the new column 500 against the older table.
     is_postgres = db_kind != "sqlite"
+    # (table, column, typedef) tuples — columns added to a model after its table
+    # already exists must be hand-migrated here on BOTH dialects.
     new_cols = [
-        ("page_title", "TEXT NOT NULL DEFAULT ''"),
-        ("headings_text", "TEXT NOT NULL DEFAULT ''"),
-        ("body_text", "TEXT NOT NULL DEFAULT ''"),
-        ("error", "TEXT NOT NULL DEFAULT ''"),
+        ("page", "page_title", "TEXT NOT NULL DEFAULT ''"),
+        ("page", "headings_text", "TEXT NOT NULL DEFAULT ''"),
+        ("page", "body_text", "TEXT NOT NULL DEFAULT ''"),
+        ("page", "error", "TEXT NOT NULL DEFAULT ''"),
+        ("component", "needs_review", "INTEGER NOT NULL DEFAULT 0"),
     ]
     with engine.connect() as conn:
-        for col, typedef in new_cols:
+        for tbl, col, typedef in new_cols:
             # Postgres supports idempotent ADD COLUMN IF NOT EXISTS (no error on
             # re-run). SQLite (pre-3.35) doesn't, so it relies on the try/except.
             if is_postgres:
-                stmt = f"ALTER TABLE page ADD COLUMN IF NOT EXISTS {col} {typedef}"
+                stmt = f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS {col} {typedef}"
             else:
-                stmt = f"ALTER TABLE page ADD COLUMN {col} {typedef}"
+                stmt = f"ALTER TABLE {tbl} ADD COLUMN {col} {typedef}"
             try:
                 conn.execute(_sql_text(stmt))
                 conn.commit()
@@ -394,7 +397,7 @@ def _migrate_db() -> None:
                 # Expected when the column already exists; log anything else.
                 msg = str(exc).lower()
                 if "duplicate column" not in msg and "already exists" not in msg:
-                    logger.warning("migrate add-column %s failed: %s", col, exc)
+                    logger.warning("migrate add-column %s.%s failed: %s", tbl, col, exc)
         # SQLModel won't add indexes to a pre-existing table, so hand-create the
         # foreign-key indexes that hot queries filter on.
         indexes = [
@@ -543,15 +546,13 @@ def get_project_history(project_id: int):
             all_issues = []
             for page in pages:
                 all_issues.extend(s.exec(select(Issue).where(Issue.page_id == page.id)).all())
-            counts: dict = {"critical": 0, "serious": 0, "moderate": 0, "minor": 0}
-            for i in all_issues:
-                if i.severity in counts:
-                    counts[i.severity] += 1
+            counts = _severity_counts(all_issues)  # CONFIRMED only
             result.append({
                 "id": scan.id,
                 "completed_at": scan.completed_at.isoformat() if scan.completed_at else None,
                 "score": _compute_release_score(all_issues),
                 "total": len(all_issues),
+                "needs_review": _needs_review_count(all_issues),
                 **counts,
             })
         return result
@@ -657,7 +658,20 @@ def get_scan(scan_id: int):
         ).all()
         result["components"] = [c.model_dump() for c in components]
         flat_issues = [i for p in result["pages"] for i in p["issues"]]
-        result["release_score"] = _compute_release_score(flat_issues)
+        confirmed = _severity_counts(flat_issues)
+        score = _compute_release_score(flat_issues)
+        result["summary"] = {
+            "score": score,
+            "legal_risk": _legal_risk_level(
+                confirmed["critical"], confirmed["serious"]
+            ).lower(),
+            "confirmed": confirmed,
+            "confirmed_total": sum(confirmed.values()),
+            "needs_review": _needs_review_count(flat_issues),
+            "total": len(flat_issues),
+        }
+        # Backward-compat: release_score mirrors summary.score.
+        result["release_score"] = score
         return result
 
 
@@ -682,7 +696,7 @@ def export_csv(scan_id: int):
                              issue.description, issue.help_url, issue.status])
     return Response(
         content=buf.getvalue(),
-        media_type="text/csv",
+        media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename=a11y-{scan_id}.csv"},
     )
 
@@ -708,11 +722,9 @@ def export_markdown(scan_id: int):
             page_data.append((page, issues))
 
     score = _compute_release_score(all_issues)
-    counts = {"critical": 0, "serious": 0, "moderate": 0, "minor": 0}
-    for i in all_issues:
-        if i.severity in counts:
-            counts[i.severity] += 1
-    needs_manual = sum(1 for i in all_issues if i.verification == "needs_manual")
+    counts = _severity_counts(all_issues)  # CONFIRMED only
+    needs_manual = _needs_review_count(all_issues)
+    confirmed_total = sum(counts.values())
     risk = _legal_risk_level(counts["critical"], counts["serious"])
     risk_icon = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢"}[risk]
     project_name = project.name if project else "this website"
@@ -729,13 +741,13 @@ def export_markdown(scan_id: int):
         "",
         "| Metric | Value |",
         "|--------|-------|",
-        f"| Total issues | {len(all_issues)} |",
-        f"| Auto-verified | {len(all_issues) - needs_manual} |",
+        f"| Total findings | {len(all_issues)} |",
+        f"| Confirmed violations | {confirmed_total} |",
         f"| Needs manual review | {needs_manual} |",
-        f"| Critical | {counts['critical']} |",
-        f"| Serious | {counts['serious']} |",
-        f"| Moderate | {counts['moderate']} |",
-        f"| Minor | {counts['minor']} |",
+        f"| Critical (confirmed) | {counts['critical']} |",
+        f"| Serious (confirmed) | {counts['serious']} |",
+        f"| Moderate (confirmed) | {counts['moderate']} |",
+        f"| Minor (confirmed) | {counts['minor']} |",
         "",
     ]
 
@@ -755,25 +767,31 @@ def export_markdown(scan_id: int):
         lines.append("")
 
     # ── Legal Exposure ──────────────────────────────────────────────────────
-    p1_components = [c for c in components if c.top_severity in ("critical", "serious")]
+    # Only CONFIRMED critical/serious violations drive legal exposure; the EAA
+    # penalty language must NOT be emitted on the basis of incomplete items that
+    # merely need manual review.
+    confirmed_high = counts["critical"] + counts["serious"]
+    p1_components = [
+        c for c in components if c.top_severity in ("critical", "serious")
+    ]
     lines += [
         "## Legal Exposure",
         "",
         f"**Risk level: {risk_icon} {risk}** "
-        f"({counts['critical']} critical, {counts['serious']} serious violations)",
+        f"({counts['critical']} confirmed critical, {counts['serious']} confirmed serious violations)",
         "",
         "### EU Accessibility Act (EAA)",
         "",
-        "The European Accessibility Act (Directive 2019/882) entered force on **June 28, 2025**. "
-        "It mandates WCAG 2.1 AA compliance (EN 301 549) for most digital products and services "
-        "sold or offered in the EU. Non-compliance can result in penalties of up to "
-        "**€100,000 or 4% of annual revenue** plus mandatory corrective action and potential "
-        "market withdrawal.",
-        "",
     ]
-    if p1_components:
+    if confirmed_high > 0:
         lines += [
-            f"This scan detected **{counts['critical'] + counts['serious']} high-priority violations** "
+            "The European Accessibility Act (Directive 2019/882) entered force on **June 28, 2025**. "
+            "It mandates WCAG 2.1 AA compliance (EN 301 549) for most digital products and services "
+            "sold or offered in the EU. Non-compliance can result in penalties of up to "
+            "**€100,000 or 4% of annual revenue** plus mandatory corrective action and potential "
+            "market withdrawal.",
+            "",
+            f"This scan detected **{confirmed_high} confirmed high-priority violation(s)** "
             f"across **{len(p1_components)} component type(s)** that may constitute EAA non-compliance:",
             "",
         ]
@@ -782,7 +800,11 @@ def export_markdown(scan_id: int):
             lines.append(f"- **{c.name}** — {c.issue_count} issue(s): {rules}")
         lines.append("")
     else:
-        lines += ["No critical or serious violations detected. ✓", ""]
+        lines += [
+            "No confirmed WCAG AA violations were detected by automated scanning. "
+            f"{needs_manual} item(s) need manual review.",
+            "",
+        ]
 
     lines += [
         "### ADA Title III (United States)",
@@ -792,45 +814,63 @@ def export_markdown(scan_id: int):
         "WCAG 2.0/2.1 AA is the de-facto legal standard referenced in demand letters and "
         "DOJ guidance. Serious WCAG violations are the most commonly cited basis for complaints.",
         "",
-        f"**Assessed risk: {risk_icon} {risk}** based on {counts['critical']} critical "
-        f"and {counts['serious']} serious violations found in this scan.",
+        f"**Assessed risk: {risk_icon} {risk}** based on {counts['critical']} confirmed critical "
+        f"and {counts['serious']} confirmed serious violations found in this scan.",
         "",
-        "> *This legal context is informational. Consult qualified legal counsel for compliance advice.*",
+        "> *This is informational, not legal advice. Consult qualified legal counsel for compliance advice.*",
         "",
         "---",
         "",
     ]
 
     # ── Draft EAA Accessibility Statement ──────────────────────────────────
+    # Conformance wording is driven by CONFIRMED violations only — incomplete
+    # items that merely need manual review must NOT force a "partially
+    # conformant" claim on their own.
+    if confirmed_total > 0:
+        conformance_status = (
+            "**Conformance status:** Partially conformant with WCAG 2.1 Level AA "
+            "(EN 301 549). Partial conformance means that some parts of the content "
+            "do not yet fully conform to the standard."
+        )
+    else:
+        conformance_status = (
+            "**Conformance status:** No WCAG 2.1 Level AA violations were confirmed by "
+            "automated scanning. Conformance cannot be fully asserted until the "
+            f"{needs_manual} item(s) flagged for manual review have been verified."
+        )
     lines += [
         "## Draft Accessibility Statement",
         "",
-        "> *Review with legal counsel before publishing. "
-        "Structure follows the EAA/EN 301 549 template.*",
+        "> *This is informational, not legal advice. Review with legal counsel before "
+        "publishing. Structure follows the EAA/EN 301 549 template.*",
         "",
         f"**Accessibility Statement — {project_name}**",
         "",
         "We are committed to ensuring digital accessibility for people with disabilities "
         "and are continually improving the user experience for everyone.",
         "",
-        "**Conformance status:** Partially conformant with WCAG 2.1 Level AA (EN 301 549). "
-        "Partial conformance means that some parts of the content do not yet fully conform "
-        "to the standard.",
+        conformance_status,
         "",
     ]
-    if all_issues:
+    # Confirmed components only drive the remediation list; components with only
+    # incomplete items carry top_severity == "review".
+    confirmed_components = [c for c in components if c.top_severity != "review"]
+    if confirmed_total > 0 and confirmed_components:
         lines += [
             "**Non-accessible content (as of scan date):**",
             "",
-            f"An automated scan identified {len(all_issues)} accessibility issues. "
+            f"An automated scan confirmed {confirmed_total} accessibility violation(s). "
             "The following component types require remediation:",
             "",
         ]
-        for c in components[:6]:
+        for c in confirmed_components[:6]:
             rules = ", ".join(json.loads(c.rule_ids or "[]"))
             lines.append(f"- **{c.name}**: {c.issue_count} issue(s) — {rules}")
-        if len(components) > 6:
-            lines.append(f"- *(and {len(components) - 6} additional component type(s))*")
+        if len(confirmed_components) > 6:
+            lines.append(
+                f"- *(and {len(confirmed_components) - 6} additional component type(s))*"
+            )
         lines += ["", "We are actively working to remediate these issues.", ""]
 
     lines += [
@@ -871,19 +911,48 @@ def export_markdown(scan_id: int):
 
     return Response(
         content="\n".join(lines),
-        media_type="text/markdown",
+        media_type="text/markdown; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename=a11y-report-{scan_id}.md"},
     )
 
 
 # ── Release-readiness score ────────────────────────────────────────────────────
 
-def _compute_release_score(issues: list) -> int:
+def _is_confirmed(i) -> bool:
+    """A CONFIRMED axe violation (verification == "auto"). Items axe could not
+    determine (verification == "needs_manual" / incomplete) are NOT confirmed and
+    must never count toward severity, score, legal risk, or component debt.
+
+    Accepts both dict and ORM forms; defaults to confirmed ("auto") when the
+    attribute is missing, so older/partial records aren't silently dropped."""
+    if isinstance(i, dict):
+        v = i.get("verification", "auto")
+    else:
+        v = getattr(i, "verification", "auto")
+    return (v or "auto") == "auto"
+
+
+def _severity_counts(issues: list) -> dict:
+    """Severity tally of CONFIRMED issues only."""
     counts: dict = {"critical": 0, "serious": 0, "moderate": 0, "minor": 0}
     for i in issues:
+        if not _is_confirmed(i):
+            continue
         sev = i["severity"] if isinstance(i, dict) else i.severity
         if sev in counts:
             counts[sev] += 1
+    return counts
+
+
+def _needs_review_count(issues: list) -> int:
+    """Count of non-confirmed (needs_manual / incomplete) issues."""
+    return sum(1 for i in issues if not _is_confirmed(i))
+
+
+def _compute_release_score(issues: list) -> int:
+    # CONFIRMED violations only — incomplete items (needs manual review) never
+    # penalize the score.
+    counts = _severity_counts(issues)
     # Each tier contributes independently, capped so moderate sites don't flatline
     penalty = (
         min(counts["critical"] * 25, 75) +
@@ -1107,10 +1176,8 @@ def holistic_review(scan_id: int):
         pages_text = ""
         for page in sampled:
             issues = s.exec(select(Issue).where(Issue.page_id == page.id)).all()
-            counts: dict = {"critical": 0, "serious": 0, "moderate": 0, "minor": 0}
-            for i in issues:
-                if i.severity in counts:
-                    counts[i.severity] += 1
+            counts = _severity_counts(issues)  # CONFIRMED only
+            needs_review = _needs_review_count(issues)
             # The page title/headings/body are scanned-site-controlled — wrap them.
             page_block = (
                 f"URL: {page.url}\n"
@@ -1120,7 +1187,8 @@ def holistic_review(scan_id: int):
             )
             pages_text += (
                 f"\n{_wrap_untrusted(page_block)}\n"
-                f"Axe violations (trusted, computed): {counts}\n---\n"
+                f"Axe confirmed violations (trusted, computed): {counts}\n"
+                f"Items needing manual review (not counted as violations): {needs_review}\n---\n"
             )
 
     prompt = (
@@ -1174,10 +1242,9 @@ def _generate_html_report(scan_id: int) -> str:
             page_data.append((page, issues))
 
     score = _compute_release_score(all_issues)
-    counts: dict = {"critical": 0, "serious": 0, "moderate": 0, "minor": 0}
-    for i in all_issues:
-        if i.severity in counts:
-            counts[i.severity] += 1
+    counts = _severity_counts(all_issues)  # CONFIRMED only
+    needs_review = _needs_review_count(all_issues)
+    confirmed_total = sum(counts.values())
     risk = _legal_risk_level(counts["critical"], counts["serious"])
     risk_color = {"HIGH": "#c0392b", "MEDIUM": "#e67e22", "LOW": "#27ae60"}[risk]
     # html.escape every scanned-page-controlled value — this HTML is rendered in
@@ -1246,15 +1313,17 @@ def _generate_html_report(scan_id: int) -> str:
 <h1>Accessibility Compliance Report</h1>
 <div class="meta">
   <strong>{project_name}</strong> &nbsp;·&nbsp; {scan_date} &nbsp;·&nbsp;
-  {len(page_data)} page(s) scanned &nbsp;·&nbsp; {len(all_issues)} total issues
+  {len(page_data)} page(s) scanned &nbsp;·&nbsp;
+  {confirmed_total} confirmed violation(s) &nbsp;·&nbsp; {needs_review} need(s) manual review
 </div>
 
 <p><span class="score">{score}/100</span> &nbsp; <span class="risk">{risk} LEGAL RISK</span></p>
 
 <h2>Issue Summary</h2>
 <table>
-<tr><th>Severity</th><th>Count</th></tr>
+<tr><th>Severity (confirmed)</th><th>Count</th></tr>
 {''.join(_row(s, counts[s]) for s in ['critical','serious','moderate','minor'])}
+<tr><td>Needs manual review</td><td>{needs_review}</td></tr>
 </table>
 
 {'<h2>Component Blast Radius</h2><table><tr><th>#</th><th>Component</th><th>Issues</th><th>Pages</th><th>Debt</th><th>Rules</th></tr>' + comp_rows + '</table>' if components else ''}
@@ -1437,10 +1506,9 @@ def generate_compliance_report(scan_id: int):
         ).all()
 
     score = _compute_release_score(all_issues)
-    counts: dict = {"critical": 0, "serious": 0, "moderate": 0, "minor": 0}
-    for i in all_issues:
-        if i.severity in counts:
-            counts[i.severity] += 1
+    counts = _severity_counts(all_issues)  # CONFIRMED only
+    needs_review = _needs_review_count(all_issues)
+    confirmed_total = sum(counts.values())
     risk = _legal_risk_level(counts["critical"], counts["serious"])
     project_name = project.name if project else "the scanned website"
     scan_date = (scan.completed_at or scan.started_at or datetime.utcnow()).strftime("%B %d, %Y")
@@ -1451,6 +1519,10 @@ def generate_compliance_report(scan_id: int):
     failing_aa: set = set()
     criterion_counts: dict = {}
     for i in all_issues:
+        # Only CONFIRMED violations count as "failing" criteria for the legal
+        # conformance statement; incomplete items need manual review first.
+        if not _is_confirmed(i):
+            continue
         tags = json.loads(i.wcag_criteria or "[]")
         level = _wcag_level_from_tags(tags)
         for tag in tags:
@@ -1483,10 +1555,11 @@ def generate_compliance_report(scan_id: int):
         f"Release-readiness score: {score}/100\n"
         f"Legal risk level: {risk}\n"
         f"Pages scanned: {len(pages)}\n"
-        f"Issues: {len(all_issues)} total — "
+        f"Confirmed violations: {confirmed_total} — "
         f"{counts['critical']} critical, {counts['serious']} serious, "
         f"{counts['moderate']} moderate, {counts['minor']} minor\n"
-        f"Failing WCAG criteria: {', '.join(failing_criteria_list) or 'none detected'}\n\n"
+        f"Items needing manual review (NOT counted as violations): {needs_review}\n"
+        f"Failing WCAG criteria (confirmed): {', '.join(failing_criteria_list) or 'none detected'}\n\n"
         "Write four sections:\n"
         "1. executive_summary: 2-3 sentences for a non-technical audience (board, legal, C-suite). "
         "Focus on user impact and legal exposure. No WCAG numbers, no jargon.\n"
@@ -1513,7 +1586,9 @@ def generate_compliance_report(scan_id: int):
         # Computed values overlay the AI text — the model never sets these.
         "score": score,
         "risk": risk,
-        "counts": counts,
+        "counts": counts,  # CONFIRMED severity counts
+        "needs_review": needs_review,
+        "confirmed_total": confirmed_total,
         "pages_scanned": len(pages),
         "total_issues": len(all_issues),
         "failing_criteria": failing_criteria_list,
@@ -1728,6 +1803,45 @@ def _normalize_selector(sel: str) -> str:
     return last
 
 
+# Recognizable component classes that map to a clean human name regardless of
+# the tag/framework prefix they carry (e.g. v-marquee, vmarquee, js-marquee).
+# Matched as substrings against a class fragment (after stripping a 1–2 char
+# framework prefix like "v", "js"), so "marquee", "v-marquee" and "vmarquee"
+# all resolve identically.
+_CLASS_NAME_HINTS = [
+    (re.compile(r'marquee'), "Marquee"),
+    (re.compile(r'carousel|slider|swiper'), "Carousel"),
+    (re.compile(r'accordion'), "Accordion"),
+    (re.compile(r'modal|dialog'), "Modal"),
+    (re.compile(r'dropdown'), "Dropdown"),
+    (re.compile(r'tooltip'), "Tooltip"),
+    (re.compile(r'breadcrumb'), "Breadcrumb"),
+    (re.compile(r'navbar|navigation'), "Navigation"),
+]
+
+# Class fragments that carry no semantic meaning on their own — when a derived
+# name would be one of these, fall back to the tag's semantic label instead.
+_NOISE_CLASS_WORDS = {
+    "inner", "outer", "wrap", "wrapper", "container", "content", "split",
+    "row", "col", "column", "item", "box", "block", "el", "element", "main",
+}
+
+
+def _humanize_class(cls: str, tag: str) -> str:
+    """Turn a class fragment into a human label, mapping known component classes
+    and falling back to the tag's semantic label for generic structural noise
+    like 'split-inner'."""
+    for pattern, label in _CLASS_NAME_HINTS:
+        if pattern.search(cls):
+            return label
+    words = re.split(r'[-_]', cls)
+    meaningful = [w for w in words if w and w.lower() not in _NOISE_CLASS_WORDS]
+    if not meaningful:
+        # Purely structural class (e.g. "split-inner") — use the tag's label.
+        return _TAG_NAMES.get(tag, tag.capitalize())
+    return " ".join(w.title() for w in meaningful)
+
+
 def _guess_component_name(sig: str) -> str:
     # [role=...] wins — most semantic
     m = re.search(r'\[role=["\']?([a-z-]+)', sig)
@@ -1742,8 +1856,14 @@ def _guess_component_name(sig: str) -> str:
     m = re.match(r'^([a-z][a-z0-9]*)\.([a-z][a-z0-9_-]*)', sig)
     if m:
         tag, cls = m.group(1), m.group(2)
+        # A recognizable component class names the component on its own.
+        for pattern, label in _CLASS_NAME_HINTS:
+            if pattern.search(cls):
+                return label
         tag_label = _TAG_NAMES.get(tag, tag.capitalize())
-        cls_label = cls.replace('-', ' ').replace('_', ' ').title()
+        cls_label = _humanize_class(cls, tag)
+        if cls_label == tag_label:
+            return tag_label  # noise class collapsed to the tag — don't double it
         return f"{tag_label} ({cls_label})"
     # bare tag
     m = re.match(r'^([a-z][a-z0-9]*)$', sig)
@@ -1759,7 +1879,15 @@ def _guess_component_name(sig: str) -> str:
     # first class as fallback
     m = re.search(r'\.([a-z][a-z0-9_-]*)', sig)
     if m:
-        return m.group(1).replace('-', ' ').replace('_', ' ').title()
+        cls = m.group(1)
+        for pattern, label in _CLASS_NAME_HINTS:
+            if pattern.search(cls):
+                return label
+        words = re.split(r'[-_]', cls)
+        meaningful = [w for w in words if w and w.lower() not in _NOISE_CLASS_WORDS]
+        if meaningful:
+            return " ".join(w.title() for w in meaningful)
+        return cls.replace('-', ' ').replace('_', ' ').title()
     return sig[:40] or "Unknown"
 
 
@@ -1783,40 +1911,60 @@ def _cluster_components(scan_id: int) -> None:
             for issue in s.exec(select(Issue).where(Issue.page_id == page.id)).all():
                 all_issues.append((issue, page.url))
 
-        # Group by normalized selector signature
+        # Group by normalized selector signature. Two raw selectors that
+        # normalize differently but yield the same human name describe the same
+        # visual component, so the grouping key folds on (signature, name) and a
+        # post-pass merges any groups that still share a name — this kills the
+        # "Footer Company appears as #8 and #9" duplicates.
         groups: dict = {}
         for issue, page_url in all_issues:
             sig = _normalize_selector(issue.selector)
-            if sig not in groups:
-                groups[sig] = {
+            name = _guess_component_name(sig)
+            key = name  # merge on human name so visually-identical comps coalesce
+            if key not in groups:
+                groups[key] = {
+                    "signature": sig,
+                    "name": name,
                     "sample_selector": issue.selector,
                     "issues": [],
                     "pages": set(),
                 }
-            groups[sig]["issues"].append(issue)
-            groups[sig]["pages"].add(page_url)
+            groups[key]["issues"].append(issue)
+            groups[key]["pages"].add(page_url)
 
-        for sig, g in groups.items():
+        for key, g in groups.items():
             issues = g["issues"]
+            confirmed = [i for i in issues if _is_confirmed(i)]
+            needs_review = len(issues) - len(confirmed)
             pages_affected = len(g["pages"])
-            issue_count = len(issues)
-            severities = [i.severity for i in issues]
-            top_sev = max(
-                severities,
-                key=lambda x: _SEVERITY_WEIGHT.get(x, 0),
-                default="minor",
-            )
-            # debt = sum of severity weights × pages affected
-            debt = sum(_SEVERITY_WEIGHT.get(i.severity, 1) for i in issues) * pages_affected
+            # All aggregations are CONFIRMED-only so an incomplete-only component
+            # never lands in the P0/P1 backlog bands.
+            if confirmed:
+                issue_count = len(confirmed)
+                top_sev = max(
+                    (i.severity for i in confirmed),
+                    key=lambda x: _SEVERITY_WEIGHT.get(x, 0),
+                    default="minor",
+                )
+                debt = sum(
+                    _SEVERITY_WEIGHT.get(i.severity, 1) for i in confirmed
+                ) * pages_affected
+            else:
+                issue_count = 0
+                top_sev = "review"   # excluded from severity backlog bands
+                debt = 0.0
+            # rule_ids reflect every finding in the group (confirmed + review) so
+            # the rule list stays complete for display.
             rule_ids = json.dumps(sorted({i.rule_id for i in issues}))
             s.add(Component(
                 project_id=scan.project_id,
                 scan_id=scan_id,
-                signature=sig[:200],
-                name=_guess_component_name(sig),
+                signature=g["signature"][:200],
+                name=g["name"],
                 sample_selector=g["sample_selector"][:300],
                 rule_ids=rule_ids,
                 issue_count=issue_count,
+                needs_review=needs_review,
                 pages_affected=pages_affected,
                 debt_score=float(debt),
                 top_severity=top_sev,

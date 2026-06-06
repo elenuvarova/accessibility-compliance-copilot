@@ -37,6 +37,50 @@ function legalRisk(counts) {
   return "low";
 }
 
+// Derive an authoritative, confirmed-only summary from a scan. Prefers the
+// backend's `scan.summary` object when present; otherwise falls back to
+// recomputing from the issues, treating verification === "auto" as a CONFIRMED
+// violation and verification === "needs_manual" ("incomplete") as needs-review.
+// Needs-review issues are NEVER counted toward a confirmed severity.
+function deriveSummary(scan) {
+  const allIssues = scan?.pages?.flatMap((p) => p.issues) ?? [];
+  const s = scan?.summary;
+  if (s && s.confirmed) {
+    const confirmed = {
+      critical: s.confirmed.critical ?? 0,
+      serious: s.confirmed.serious ?? 0,
+      moderate: s.confirmed.moderate ?? 0,
+      minor: s.confirmed.minor ?? 0,
+    };
+    const confirmedTotal =
+      s.confirmed_total ??
+      confirmed.critical + confirmed.serious + confirmed.moderate + confirmed.minor;
+    return {
+      confirmed,
+      confirmedTotal,
+      needsReview: s.needs_review ?? 0,
+      score: s.score ?? scan?.release_score,
+      legalRisk: s.legal_risk ?? legalRisk(confirmed),
+    };
+  }
+  // Fallback for older responses without `summary`.
+  const confirmed = { critical: 0, serious: 0, moderate: 0, minor: 0 };
+  let needsReview = 0;
+  allIssues.forEach((i) => {
+    if (i.verification === "needs_manual") needsReview++;
+    else if (confirmed[i.severity] != null) confirmed[i.severity]++;
+  });
+  const confirmedTotal =
+    confirmed.critical + confirmed.serious + confirmed.moderate + confirmed.minor;
+  return {
+    confirmed,
+    confirmedTotal,
+    needsReview,
+    score: scan?.release_score,
+    legalRisk: legalRisk(confirmed),
+  };
+}
+
 // ── Inline icons (Lucide-style stroke paths, no dependency) ───────────────────
 // Rendered decoratively; callers wrap them next to a visible text label, so the
 // SVG itself is aria-hidden.
@@ -140,10 +184,19 @@ function ScoreBadge({ score }) {
   );
 }
 
-function LegalRiskBadge({ counts }) {
-  const risk = legalRisk(counts);
+function LegalRiskBadge({ counts, risk: riskProp }) {
+  // Prefer an explicit risk (from the confirmed-only summary); otherwise compute
+  // from confirmed counts. Either way, needs-review items never raise the risk.
+  const risk = riskProp ?? legalRisk(counts ?? { critical: 0, serious: 0, moderate: 0, minor: 0 });
   const label = { high: "⚠ High EAA/ADA Risk", medium: "EAA/ADA Risk", low: "✓ Low Legal Risk" }[risk];
-  return <span className={`legal-risk-badge risk-${risk}`}>{label}</span>;
+  return (
+    <span
+      className={`legal-risk-badge risk-${risk}`}
+      title="Informational risk indicator from confirmed violations only — not legal advice."
+    >
+      {label}
+    </span>
+  );
 }
 
 // ── Sitemap picker ────────────────────────────────────────────────────────────
@@ -424,7 +477,7 @@ function HistoryView({ history, diff, currentScanId }) {
       <table className="history-table">
         <caption className="visually-hidden">Score and issue counts for each completed scan</caption>
         <thead>
-          <tr><th>Scan</th><th>Date</th><th>Score</th><th>Total</th><th>Critical</th><th>Serious</th><th>Mod.</th><th>Minor</th></tr>
+          <tr><th>Scan</th><th>Date</th><th>Score</th><th>Total</th><th>Critical</th><th>Serious</th><th>Mod.</th><th>Minor</th><th>Review</th></tr>
         </thead>
         <tbody>
           {[...history].reverse().map((h) => (
@@ -437,6 +490,7 @@ function HistoryView({ history, diff, currentScanId }) {
               <td className={h.serious > 0 ? "count-serious" : ""}>{h.serious}</td>
               <td>{h.moderate}</td>
               <td>{h.minor}</td>
+              <td className={h.needs_review > 0 ? "count-manual" : ""}>{h.needs_review ?? 0}</td>
             </tr>
           ))}
         </tbody>
@@ -472,7 +526,10 @@ function BacklogSection({ priority, label, sublabel, components, issueCount, emp
             <div key={c.id} className="backlog-item">
               <span className={`badge badge-sev-${c.top_severity} backlog-item-sev`}>{c.top_severity}</span>
               <span className="backlog-item-name">{c.name}</span>
-              <span className="backlog-item-issues">{c.issue_count} {c.issue_count === 1 ? "issue" : "issues"}</span>
+              <span className="backlog-item-issues">
+                {c.issue_count} {c.issue_count === 1 ? "issue" : "issues"}
+                {c.needs_review > 0 && <span className="backlog-item-verify"> · +{c.needs_review} to verify</span>}
+              </span>
               <span className="backlog-item-rules">{parseJson(c.rule_ids).join(" · ")}</span>
             </div>
           ))}
@@ -482,11 +539,44 @@ function BacklogSection({ priority, label, sublabel, components, issueCount, emp
   );
 }
 
-function BacklogView({ components, allIssues }) {
+// Neutral, calm grouping for components whose issues are ALL incomplete
+// (top_severity === "review") — these are NOT confirmed violations, so they
+// never appear in the P0/P1/P2 priority bands.
+function BacklogReviewSection({ components }) {
+  if (components.length === 0) return null;
+  const total = components.reduce((n, c) => n + (c.needs_review ?? 0), 0);
+  return (
+    <div className="backlog-section backlog-review">
+      <div className="backlog-section-header">
+        <span className="priority-badge priority-review">Review</span>
+        <div className="backlog-section-title">
+          <strong>Needs Manual Review</strong>
+          <span className="backlog-sublabel">Incomplete checks axe couldn&apos;t determine — verify manually, not confirmed violations</span>
+        </div>
+        <span className="backlog-count">
+          {total} to verify · {components.length} {components.length === 1 ? "component" : "components"}
+        </span>
+      </div>
+      <div className="backlog-items">
+        {components.map((c) => (
+          <div key={c.id} className="backlog-item">
+            <span className="badge badge-review backlog-item-sev">review</span>
+            <span className="backlog-item-name">{c.name}</span>
+            <span className="backlog-item-issues">{c.needs_review ?? 0} to verify</span>
+            <span className="backlog-item-rules">{parseJson(c.rule_ids).join(" · ")}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BacklogView({ components, summary }) {
   const p0 = components.filter((c) => c.top_severity === "critical");
   const p1 = components.filter((c) => c.top_severity === "serious");
   const p2 = components.filter((c) => c.top_severity === "moderate" || c.top_severity === "minor");
-  const count = (sev) => allIssues.filter((i) => i.severity === sev).length;
+  const reviewOnly = components.filter((c) => c.top_severity === "review");
+  const count = (sev) => summary.confirmed[sev] ?? 0;
   if (components.length === 0) {
     return (
       <div className="tab-empty">
@@ -506,6 +596,7 @@ function BacklogView({ components, allIssues }) {
       <BacklogSection priority="P2" label="Schedule in Backlog"
         sublabel="Moderate & minor issues — quality improvements and broader coverage"
         components={p2} issueCount={count("moderate") + count("minor")} emptyMsg="✓ No moderate or minor issues found." />
+      <BacklogReviewSection components={reviewOnly} />
     </div>
   );
 }
@@ -526,14 +617,23 @@ function ComponentsView({ components }) {
       {components.map((c, idx) => {
         const rules = parseJson(c.rule_ids);
         const pct = Math.round((c.debt_score / maxDebt) * 100);
+        const isReview = c.top_severity === "review";
         return (
           <div key={c.id} className={`component-card top-sev-${c.top_severity}`}>
             <div className="component-rank">#{idx + 1}</div>
             <div className="component-body">
               <div className="component-header">
                 <span className="component-name">{c.name}</span>
-                <span className={`badge badge-sev-${c.top_severity}`}>{c.top_severity}</span>
-                <span className="component-stats">{c.issue_count} {c.issue_count === 1 ? "issue" : "issues"} · {c.pages_affected} {c.pages_affected === 1 ? "page" : "pages"}</span>
+                {isReview
+                  ? <span className="badge badge-review">review</span>
+                  : <span className={`badge badge-sev-${c.top_severity}`}>{c.top_severity}</span>}
+                <span className="component-stats">
+                  {isReview
+                    ? `${c.needs_review ?? 0} to verify`
+                    : `${c.issue_count} ${c.issue_count === 1 ? "issue" : "issues"}`}
+                  {" · "}{c.pages_affected} {c.pages_affected === 1 ? "page" : "pages"}
+                  {!isReview && c.needs_review > 0 && <span className="muted"> · +{c.needs_review} to verify</span>}
+                </span>
                 <span className="debt-score">debt {c.debt_score}</span>
               </div>
               <div className="debt-bar"><div className="debt-bar-fill" style={{ width: `${pct}%` }} /></div>
@@ -772,9 +872,10 @@ function IssuesView({ pages, fixSuggestions, fixLoading, fixErrors, onGetFix, sc
   }
 
   return pages.map((page) => {
-    const sorted = [...page.issues].sort(
-      (a, b) => (SEVERITY_ORDER[a.severity] ?? 4) - (SEVERITY_ORDER[b.severity] ?? 4)
-    );
+    // Confirmed issues first (sorted by severity), needs-review grouped after.
+    const rank = (i) =>
+      i.verification === "needs_manual" ? 99 : (SEVERITY_ORDER[i.severity] ?? 4);
+    const sorted = [...page.issues].sort((a, b) => rank(a) - rank(b));
     return (
       <div key={page.id} className="page-block">
         <h3 className="page-url">{page.url}</h3>
@@ -797,10 +898,15 @@ function IssuesView({ pages, fixSuggestions, fixLoading, fixErrors, onGetFix, sc
                 const fix = fixSuggestions[issue.id];
                 const loading = fixLoading[issue.id];
                 const fixErr = fixErrors?.[issue.id];
+                const needsReview = issue.verification === "needs_manual";
                 return [
-                  <tr key={issue.id} className={`sev-${issue.severity}`}>
+                  <tr key={issue.id} className={needsReview ? "sev-review" : `sev-${issue.severity}`}>
                     <td><a href={issue.help_url} target="_blank" rel="noopener noreferrer">{issue.rule_id}</a></td>
-                    <td><span className={`badge badge-sev-${issue.severity}`}>{issue.severity}</span></td>
+                    <td>
+                      {needsReview
+                        ? <span className="badge badge-review">review</span>
+                        : <span className={`badge badge-sev-${issue.severity}`}>{issue.severity}</span>}
+                    </td>
                     <td className="mono small">{formatWcagCriteria(issue.wcag_criteria).join(" ") || "—"}</td>
                     <td className="mono small truncate">{issue.selector}</td>
                     <td>
@@ -1086,6 +1192,9 @@ function ComplianceReportView({ report, loading, reportError, onGenerate }) {
           <span className="count-serious">{report.counts?.serious ?? 0} serious</span>
           <span className="count-moderate">{report.counts?.moderate ?? 0} moderate</span>
           <span className="count-minor">{report.counts?.minor ?? 0} minor</span>
+          {(report.counts?.needs_review ?? report.needs_review) > 0 && (
+            <span className="count-manual">{report.counts?.needs_review ?? report.needs_review} need review</span>
+          )}
           <span className="report-pages">{report.pages_scanned} page{report.pages_scanned !== 1 ? "s" : ""}</span>
         </div>
       </div>
@@ -1374,9 +1483,11 @@ export default function App() {
   };
 
   const allIssues = scan?.pages?.flatMap((p) => p.issues) ?? [];
-  const counts = { critical: 0, serious: 0, moderate: 0, minor: 0 };
-  allIssues.forEach((i) => counts[i.severity] != null && counts[i.severity]++);
-  const needsManual = allIssues.filter((i) => i.verification === "needs_manual").length;
+  // Confirmed-only summary (severity counts, needs-review tally, score, legal
+  // risk). Needs-review items are never counted as a confirmed severity.
+  const summary = deriveSummary(scan);
+  const counts = summary.confirmed;
+  const needsManual = summary.needsReview;
   const erroredPages = scan?.pages?.filter((p) => p.error).length ?? 0;
   const components = scan?.components ?? [];
   const isDone = scan?.status === "done";
@@ -1517,8 +1628,8 @@ export default function App() {
         <div className="results">
           <div className={`status-row status-${scan.status}`}>
             <span className="status-label">Status: <strong>{scan.status}</strong></span>
-            {isDone && scan.release_score !== undefined && <ScoreBadge score={scan.release_score} />}
-            {isDone && <LegalRiskBadge counts={counts} />}
+            {isDone && summary.score !== undefined && summary.score !== null && <ScoreBadge score={summary.score} />}
+            {isDone && <LegalRiskBadge risk={summary.legalRisk} />}
             {isDone && diff?.has_baseline && (
               <span className="status-diff">
                 {diff.fixed_count > 0 && <span className="diff-fixed-inline">↓ {diff.fixed_count} fixed</span>}
@@ -1527,11 +1638,19 @@ export default function App() {
             )}
             {isDone && (
               <span className="counts">
-                <span className="count-critical">{counts.critical} critical</span>
-                <span className="count-serious">{counts.serious} serious</span>
-                <span className="count-moderate">{counts.moderate} moderate</span>
-                <span className="count-minor">{counts.minor} minor</span>
-                <span className="count-manual">{needsManual} need manual review</span>
+                {summary.confirmedTotal === 0 ? (
+                  <span className="count-clear">No confirmed violations</span>
+                ) : (
+                  <>
+                    <span className="count-critical">{counts.critical} critical</span>
+                    <span className="count-serious">{counts.serious} serious</span>
+                    <span className="count-moderate">{counts.moderate} moderate</span>
+                    <span className="count-minor">{counts.minor} minor</span>
+                  </>
+                )}
+                {needsManual > 0 && (
+                  <span className="count-review">{needsManual} to verify</span>
+                )}
                 {erroredPages > 0 && (
                   <span className="count-errored">
                     {erroredPages} page{erroredPages !== 1 ? "s" : ""} failed to scan
@@ -1603,7 +1722,7 @@ export default function App() {
                 {activeTab.heading}
               </h2>
 
-              {view === "backlog" && <BacklogView components={components} allIssues={allIssues} />}
+              {view === "backlog" && <BacklogView components={components} summary={summary} />}
               {view === "components" && <ComponentsView components={components} />}
               {view === "issues" && (
                 <IssuesView
