@@ -368,20 +368,48 @@ Related axe-core rules: focus-visible""",
     {
         "criterion_id": "2.4.11",
         "level": "AA",
-        "title": "Focus Appearance",
-        "chunk_text": """WCAG 2.2 SC 2.4.11: Focus Appearance (Level AA, WCAG 2.2 new)
+        "title": "Focus Not Obscured (Minimum)",
+        "chunk_text": """WCAG 2.2 SC 2.4.11: Focus Not Obscured (Minimum) (Level AA, WCAG 2.2 new)
 
-Requirement: When a UI component is focused, the focus indicator must have an area of at least the perimeter of the unfocused component × 2 CSS pixels, and a contrast ratio of at least 3:1.
+Requirement: When a user interface component receives keyboard focus, the component is not entirely hidden due to author-created content (sticky headers, footers, cookie banners, or floating action buttons).
 
-Why it matters: This is new in WCAG 2.2 and strengthens the focus visible requirement with specific minimum size and contrast values.
+Why it matters: New in WCAG 2.2. Keyboard users must be able to see the element they have focused. Sticky headers and overlays commonly cover the focused element as the user tabs down the page, so they cannot tell where they are.
 
 Fix techniques:
-- Use outline: 3px solid #005fcc; outline-offset: 2px as a solid baseline
-- The focus ring must be visible all the way around the component
-- Ensure the ring color achieves 3:1 contrast against both the component and the page background
-- Browser default focus rings often meet this, but custom styles may not
+- Use scroll-padding-top on the scroll container equal to the sticky header height so focused elements scroll into a visible area: html { scroll-padding-top: 80px; }
+- Ensure scroll-margin on focusable elements pushes them clear of fixed overlays
+- Avoid full-width sticky footers that overlap the bottom row of focusable content; or reserve space for them
+- Make cookie banners and dialogs trap focus first so subsequent tabbing isn't obscured behind them
+- Test by tabbing through the entire page with a sticky header present and confirm each focused control is at least partially visible
 
-Related axe-core rules: focus-visible""",
+Common failures:
+- Sticky header covers the focused link as the user tabs past it
+- Floating chat or "back to top" button hides the focused control underneath it
+- Cookie consent bar at the bottom fully covers focused form controls
+
+Related axe-core rules: (no dedicated axe-core rule; verify manually with keyboard testing)""",
+    },
+    {
+        "criterion_id": "2.4.13",
+        "level": "AAA",
+        "title": "Focus Appearance",
+        "chunk_text": """WCAG 2.2 SC 2.4.13: Focus Appearance (Level AAA, WCAG 2.2 new)
+
+Requirement: When the keyboard focus indicator is visible, an area of the indicator is at least as large as a 2 CSS pixel thick perimeter of the unfocused component, and has a contrast ratio of at least 3:1 between the focused and unfocused states.
+
+Why it matters: New in WCAG 2.2 (Level AAA). It strengthens Focus Visible (2.4.7) with measurable minimum size and contrast values so the focus indicator is reliably perceivable, not just technically present.
+
+Fix techniques:
+- Use a solid baseline: outline: 3px solid #005fcc; outline-offset: 2px;
+- The focus ring must surround the component (or an equivalent area) and achieve 3:1 contrast against both the component and the page background
+- Avoid thin 1px outlines that fail the 2px-perimeter area test
+- Browser default focus rings often meet this; custom styles frequently do not
+
+Common failures:
+- Custom focus style that is a 1px outline or a faint glow below the contrast/area threshold
+- Focus indicated only by a subtle background color change with no perimeter
+
+Related axe-core rules: (no dedicated axe-core rule; verify manually)""",
     },
     {
         "criterion_id": "2.5.3",
@@ -628,5 +656,654 @@ Common failures:
 - Custom sliders that require click-and-drag without keyboard/button alternative
 
 Related axe-core rules: scrollable-region-focusable""",
+    },
+    {
+        "criterion_id": "1.2.1",
+        "level": "A",
+        "title": "Audio-only and Video-only (Prerecorded)",
+        "chunk_text": """WCAG 2.2 SC 1.2.1: Audio-only and Video-only (Prerecorded) (Level A)
+
+Requirement: For prerecorded audio-only content, provide a text transcript. For prerecorded video-only content (no audio), provide either a text alternative or an audio track that presents equivalent information.
+
+Why it matters: Deaf users cannot hear audio-only podcasts; blind users cannot see video-only animations. Each needs an equivalent in a perceivable form.
+
+Fix techniques:
+- Audio-only: publish a full text transcript adjacent to the player
+- Video-only (silent demo, animation): provide a text description, or an audio narration track
+- Link the transcript near the media: <a href="transcript.html">Read transcript</a>
+
+Common failures:
+- Podcast or audio clip with no transcript
+- Silent product animation with no text description or audio equivalent
+
+Related axe-core rules: (no automated axe-core rule; requires manual review)""",
+    },
+    {
+        "criterion_id": "1.2.2",
+        "level": "A",
+        "title": "Captions (Prerecorded)",
+        "chunk_text": """WCAG 2.2 SC 1.2.2: Captions (Prerecorded) (Level A)
+
+Requirement: Captions are provided for all prerecorded audio content in synchronized media (video with sound).
+
+Why it matters: Deaf and hard-of-hearing users rely on captions to access spoken dialogue and meaningful sounds in videos. Auto-generated captions are often inaccurate and may not meet this requirement on their own.
+
+Fix techniques:
+- Provide synchronized captions via <track kind="captions"> on <video>
+  <video controls><source src="demo.mp4"><track kind="captions" src="demo.vtt" srclang="en" label="English"></video>
+- Use WebVTT (.vtt) caption files with accurate timing
+- Review and correct auto-generated captions for accuracy and speaker identification
+- Caption meaningful non-speech sounds: [applause], [door slams]
+
+Common failures:
+- Video with spoken content and no caption track
+- Relying solely on uncorrected auto-captions with significant errors
+- Captions missing speaker identification or important sound effects
+
+Related axe-core rules: video-caption""",
+    },
+    {
+        "criterion_id": "1.2.3",
+        "level": "A",
+        "title": "Audio Description or Media Alternative (Prerecorded)",
+        "chunk_text": """WCAG 2.2 SC 1.2.3: Audio Description or Media Alternative (Prerecorded) (Level A)
+
+Requirement: For prerecorded synchronized media, provide either an audio description of the video, or a full text alternative (transcript including visual information).
+
+Why it matters: Blind users miss visual information shown but not spoken (on-screen text, actions, scene changes). An audio description or descriptive transcript fills that gap.
+
+Fix techniques:
+- Provide a descriptive transcript that includes both dialogue and a description of important visuals
+- Or provide an audio description track describing key visual content during pauses in dialogue
+- Link the media alternative near the player
+
+Common failures:
+- Tutorial video where steps are shown but not narrated, with no transcript
+- Transcript that contains only dialogue and omits on-screen visual information
+
+Related axe-core rules: (no automated axe-core rule; requires manual review)""",
+    },
+    {
+        "criterion_id": "1.3.2",
+        "level": "A",
+        "title": "Meaningful Sequence",
+        "chunk_text": """WCAG 2.2 SC 1.3.2: Meaningful Sequence (Level A)
+
+Requirement: When the sequence in which content is presented affects its meaning, a correct reading sequence can be programmatically determined.
+
+Why it matters: Screen readers and other assistive technologies read content in DOM order. If CSS visually reorders content (flex order, absolute positioning, grid placement), the reading order may no longer make sense.
+
+Fix techniques:
+- Keep DOM order matching the intended reading order
+- Avoid CSS order, flex-direction: row-reverse, or absolute positioning that visually reorders meaningful content away from DOM order
+- For multi-column layouts, ensure the source order reads correctly when linearized
+- Test by disabling CSS or reading the DOM order with a screen reader
+
+Common failures:
+- Visual columns whose DOM order interleaves unrelated content
+- CSS order used to move a "submit" button before the fields it submits in the DOM
+- Content positioned absolutely so the reading order is scrambled
+
+Related axe-core rules: (no automated axe-core rule; requires manual review)""",
+    },
+    {
+        "criterion_id": "1.3.3",
+        "level": "A",
+        "title": "Sensory Characteristics",
+        "chunk_text": """WCAG 2.2 SC 1.3.3: Sensory Characteristics (Level A)
+
+Requirement: Instructions for understanding and operating content do not rely solely on sensory characteristics such as shape, color, size, visual location, orientation, or sound.
+
+Why it matters: Blind users cannot perceive "the button on the right" or "the round icon". Instructions must also reference a programmatically available characteristic such as the label or name.
+
+Fix techniques:
+- Combine sensory references with text labels: "Select Save (the green button on the right)"
+- Refer to controls by their accessible name, not only position or color
+- Avoid "click the icon below" without naming the control
+
+Common failures:
+- "Press the round button" with no label reference
+- "Fields marked in red are required" relying on color only
+- "See the menu on the left" with no name or landmark reference
+
+Related axe-core rules: (no automated axe-core rule; requires manual review)""",
+    },
+    {
+        "criterion_id": "1.3.5",
+        "level": "AA",
+        "title": "Identify Input Purpose",
+        "chunk_text": """WCAG 2.2 SC 1.3.5: Identify Input Purpose (Level AA)
+
+Requirement: The purpose of each input field collecting information about the user can be programmatically determined when the field serves a purpose identified in the HTML autocomplete list.
+
+Why it matters: Users with cognitive disabilities benefit from browser autofill and personalized icons. Correct autocomplete tokens let the browser and assistive tech recognize and pre-fill common fields like name, email, and address.
+
+Fix techniques:
+- Add the appropriate autocomplete attribute to common personal-data inputs:
+  <input name="email" type="email" autocomplete="email">
+  <input name="fname" autocomplete="given-name">
+  <input name="tel" type="tel" autocomplete="tel">
+- Use the standard HTML autocomplete tokens (name, email, tel, street-address, postal-code, cc-number, etc.)
+- Pair autocomplete with the correct input type
+
+Common failures:
+- Email or name fields with no autocomplete attribute
+- Wrong or invented autocomplete token that doesn't match the field's purpose
+- autocomplete="off" on fields that collect the user's own information
+
+Related axe-core rules: autocomplete-valid""",
+    },
+    {
+        "criterion_id": "1.4.2",
+        "level": "A",
+        "title": "Audio Control",
+        "chunk_text": """WCAG 2.2 SC 1.4.2: Audio Control (Level A)
+
+Requirement: If any audio plays automatically for more than 3 seconds, a mechanism is available to pause, stop, or control its volume independently of the overall system volume.
+
+Why it matters: Auto-playing audio interferes with screen reader speech, making the page unusable for blind users until they can find and silence it. It also distracts users with cognitive disabilities.
+
+Fix techniques:
+- Avoid autoplay audio entirely where possible
+- If audio autoplays, provide a clearly visible, keyboard-accessible pause/stop control near the top of the page
+- Don't rely on the OS volume control as the only mechanism
+- For background video, use muted autoplay: <video autoplay muted>
+
+Common failures:
+- Background music or video sound that autoplays with no on-page stop control
+- Audio ads that play on load with no accessible mute
+
+Related axe-core rules: no-autoplay-audio""",
+    },
+    {
+        "criterion_id": "1.4.5",
+        "level": "AA",
+        "title": "Images of Text",
+        "chunk_text": """WCAG 2.2 SC 1.4.5: Images of Text (Level AA)
+
+Requirement: If the technologies can render the visual presentation, real text is used to convey information rather than images of text (except for logos or where a specific presentation is essential).
+
+Why it matters: Images of text don't scale crisply when zoomed, can't be restyled by users (high contrast, custom fonts), and aren't selectable or translatable.
+
+Fix techniques:
+- Use real HTML text styled with CSS instead of text baked into images
+- Use web fonts and CSS for custom typography rather than image headings
+- Reserve images of text for logos and brand marks where presentation is essential
+- For decorative banners, keep the meaningful text as real text overlaid with CSS
+
+Common failures:
+- Headings or buttons rendered as PNG/JPG images of text
+- Marketing copy embedded in an image with no real-text equivalent
+- Pricing tables built as images
+
+Related axe-core rules: (no automated axe-core rule; requires manual review)""",
+    },
+    {
+        "criterion_id": "2.2.1",
+        "level": "A",
+        "title": "Timing Adjustable",
+        "chunk_text": """WCAG 2.2 SC 2.2.1: Timing Adjustable (Level A)
+
+Requirement: For each time limit set by the content, the user can turn it off, adjust it, or extend it (to at least 10× the default), unless the limit is essential or longer than 20 hours.
+
+Why it matters: Users with disabilities may need much more time to read content or complete forms. Hard session timeouts or auto-advancing content can lock them out or cause data loss.
+
+Fix techniques:
+- Before a session timeout, warn the user and offer an "extend session" control (at least 20 seconds to respond)
+- Allow users to turn off or adjust auto-advancing carousels and slideshows
+- Avoid auto-submitting forms after a fixed time
+- Persist form data so a timeout doesn't lose entered information
+
+Common failures:
+- Session expires without warning or a way to extend
+- Carousel auto-advances with no pause and no timing control
+- Quiz or checkout that auto-submits when a hidden timer runs out
+
+Related axe-core rules: meta-refresh, meta-refresh-no-exceptions""",
+    },
+    {
+        "criterion_id": "2.2.2",
+        "level": "A",
+        "title": "Pause, Stop, Hide",
+        "chunk_text": """WCAG 2.2 SC 2.2.2: Pause, Stop, Hide (Level A)
+
+Requirement: For moving, blinking, or scrolling information that starts automatically, lasts more than 5 seconds, and is shown alongside other content, the user can pause, stop, or hide it. The same applies to auto-updating information.
+
+Why it matters: Motion and blinking content distracts users with attention or cognitive disabilities and can be impossible to read for users who need more time. Auto-updating feeds can move content out from under a screen reader.
+
+Fix techniques:
+- Provide a visible, keyboard-accessible pause/stop control for carousels, marquees, and animations
+- Respect prefers-reduced-motion: @media (prefers-reduced-motion: reduce) { animation: none; }
+- Allow auto-refreshing content (live feeds) to be paused
+- Avoid blinking content entirely
+
+Common failures:
+- Auto-rotating carousel with no pause button
+- Animated background or marquee that cannot be stopped
+- Live feed that auto-updates with no pause control
+
+Related axe-core rules: marquee, blink""",
+    },
+    {
+        "criterion_id": "2.3.1",
+        "level": "A",
+        "title": "Three Flashes or Below Threshold",
+        "chunk_text": """WCAG 2.2 SC 2.3.1: Three Flashes or Below Threshold (Level A)
+
+Requirement: Web pages do not contain anything that flashes more than three times in any one-second period, or the flash is below the general flash and red flash thresholds.
+
+Why it matters: Flashing content can trigger seizures in people with photosensitive epilepsy. This is a safety-critical criterion.
+
+Fix techniques:
+- Avoid any content that flashes more than 3 times per second
+- Keep flashing areas small and below the luminance/red flash thresholds
+- For necessary animation, use slow transitions rather than rapid flashing
+- Test with a tool such as PEAT (Photosensitive Epilepsy Analysis Tool)
+
+Common failures:
+- Rapidly flashing ads, banners, or transitions
+- Strobe effects in videos or animated GIFs
+- Saturated red flashing content
+
+Related axe-core rules: (no automated axe-core rule; requires manual review with PEAT)""",
+    },
+    {
+        "criterion_id": "2.4.5",
+        "level": "AA",
+        "title": "Multiple Ways",
+        "chunk_text": """WCAG 2.2 SC 2.4.5: Multiple Ways (Level AA)
+
+Requirement: More than one way is available to locate a web page within a set of pages, except where the page is the result of, or a step in, a process.
+
+Why it matters: Different users navigate differently. Some prefer search, others a sitemap, a menu, or breadcrumbs. Offering multiple ways accommodates these differences.
+
+Fix techniques:
+- Provide at least two of: site search, a navigation menu, a sitemap, breadcrumb trails, or an A-Z index
+- Ensure these mechanisms are consistently available across the site
+- Steps within a checkout or wizard are exempt
+
+Common failures:
+- Site with only a single navigation menu and no search or sitemap
+- Deep pages reachable only by one rigid path
+
+Related axe-core rules: (no automated axe-core rule; requires manual review)""",
+    },
+    {
+        "criterion_id": "2.5.2",
+        "level": "A",
+        "title": "Pointer Cancellation",
+        "chunk_text": """WCAG 2.2 SC 2.5.2: Pointer Cancellation (Level A)
+
+Requirement: For functionality operated with a single pointer, at least one of these is true: no down-event triggers the action; the action completes on the up-event and can be aborted or undone; or the up-event reverses the down-event.
+
+Why it matters: Users with motor impairments may touch the wrong target. Triggering actions on the up-event (and allowing the pointer to move away to cancel) lets them recover from mistakes.
+
+Fix techniques:
+- Trigger actions on click / pointerup, not pointerdown / mousedown
+- Allow the user to move the pointer off the target before releasing to cancel
+- Provide undo for actions that must fire on down-event
+- The native click event already satisfies this; avoid binding critical actions to mousedown/touchstart
+
+Common failures:
+- Action fires on mousedown/touchstart with no way to abort
+- Drag handles that commit immediately on down-press
+
+Related axe-core rules: (no automated axe-core rule; requires manual review)""",
+    },
+    {
+        "criterion_id": "2.5.4",
+        "level": "A",
+        "title": "Motion Actuation",
+        "chunk_text": """WCAG 2.2 SC 2.5.4: Motion Actuation (Level A)
+
+Requirement: Functionality operated by device motion or user motion (shaking, tilting) can also be operated by UI components, and motion actuation can be disabled, unless motion is essential.
+
+Why it matters: Users who cannot hold or move a device steadily, or who have it mounted, cannot perform shake or tilt gestures. They need a conventional control alternative.
+
+Fix techniques:
+- Provide a button alternative for any shake/tilt action (e.g., a "Undo" button alongside shake-to-undo)
+- Allow motion-based features to be turned off in settings
+- Don't rely on the device orientation/motion sensors as the only input
+
+Common failures:
+- Shake-to-undo with no button equivalent
+- Tilt-to-scroll or step counters with no alternative and no way to disable
+
+Related axe-core rules: (no automated axe-core rule; requires manual review)""",
+    },
+    {
+        "criterion_id": "2.5.7",
+        "level": "AA",
+        "title": "Dragging Movements",
+        "chunk_text": """WCAG 2.2 SC 2.5.7: Dragging Movements (Level AA, WCAG 2.2 new)
+
+Requirement: All functionality that uses a dragging movement can be operated by a single pointer without dragging, unless dragging is essential.
+
+Why it matters: New in WCAG 2.2. Users with motor impairments or tremors, and those using a head pointer or eye tracker, may be unable to perform sustained drag gestures. They need a tap/click alternative.
+
+Fix techniques:
+- For reorderable lists: add up/down move buttons or a "move to" menu as a non-drag alternative
+- For sliders: allow clicking on the track and using arrow keys, not just dragging the thumb
+- For drag-and-drop file upload: also provide a file input button
+- For map panning: provide directional buttons or click-to-center
+
+Common failures:
+- Sortable list that can only be reordered by dragging
+- Slider that responds only to drag, not click or keyboard
+- Kanban board cards movable only by drag with no menu alternative
+
+Related axe-core rules: (no automated axe-core rule; requires manual review)""",
+    },
+    {
+        "criterion_id": "3.1.2",
+        "level": "AA",
+        "title": "Language of Parts",
+        "chunk_text": """WCAG 2.2 SC 3.1.2: Language of Parts (Level AA)
+
+Requirement: The human language of each passage or phrase in the content can be programmatically determined, except for proper names, technical terms, words of indeterminate language, and words that have become part of the surrounding text's vernacular.
+
+Why it matters: When a passage is in a different language from the page default, screen readers need the lang attribute to switch pronunciation rules, otherwise foreign phrases are mispronounced.
+
+Fix techniques:
+- Mark inline foreign-language passages with lang: <span lang="fr">C'est la vie</span>
+- Mark larger sections (blockquotes, articles) with lang on the wrapping element
+- Use valid BCP 47 codes (fr, de, es, zh-Hans)
+- The page-level <html lang="..."> covers the default; only deviations need marking
+
+Common failures:
+- A French quote in an English page with no lang="fr"
+- A multilingual list where each item's language is not marked
+
+Related axe-core rules: valid-lang""",
+    },
+    {
+        "criterion_id": "3.2.1",
+        "level": "A",
+        "title": "On Focus",
+        "chunk_text": """WCAG 2.2 SC 3.2.1: On Focus (Level A)
+
+Requirement: When any UI component receives focus, it does not initiate a change of context (opening a new window, moving focus, submitting a form, or substantially changing the page).
+
+Why it matters: Keyboard and screen reader users tab through controls to explore the page. If merely focusing a control navigates away or submits, they are disoriented and may lose work.
+
+Fix techniques:
+- Do not trigger navigation, submission, or popups on the focus event
+- Reserve such actions for explicit activation (click, Enter)
+- For dropdowns, don't auto-submit on focus; wait for selection + activation
+
+Common failures:
+- A select element that navigates to a new page on focus rather than on change/activation
+- A field that opens a modal simply because it received focus
+- Auto-advancing focus that surprises the user
+
+Related axe-core rules: (no automated axe-core rule; requires manual review)""",
+    },
+    {
+        "criterion_id": "3.2.2",
+        "level": "A",
+        "title": "On Input",
+        "chunk_text": """WCAG 2.2 SC 3.2.2: On Input (Level A)
+
+Requirement: Changing the setting of a UI component does not automatically cause a change of context unless the user has been advised of the behavior beforehand.
+
+Why it matters: If selecting a value in a dropdown auto-navigates or auto-submits, users (especially screen reader and keyboard users) are taken somewhere unexpectedly, often before finishing their selection.
+
+Fix techniques:
+- Don't auto-submit a form when a checkbox, radio, or select changes; provide an explicit submit button
+- If auto-action is intended, warn the user in advance via visible/accessible instructions
+- For a jump-menu select, add a "Go" button instead of navigating on change
+
+Common failures:
+- A country dropdown that reloads the page on change with no warning
+- A toggle that submits the form immediately on change
+- Selecting a radio that navigates away
+
+Related axe-core rules: (no automated axe-core rule; requires manual review)""",
+    },
+    {
+        "criterion_id": "3.2.3",
+        "level": "AA",
+        "title": "Consistent Navigation",
+        "chunk_text": """WCAG 2.2 SC 3.2.3: Consistent Navigation (Level AA)
+
+Requirement: Navigational mechanisms repeated on multiple pages occur in the same relative order each time, unless a change is initiated by the user.
+
+Why it matters: Users with cognitive and visual disabilities rely on predictable placement. If the main nav reorders itself page to page, they have to relearn the layout each time.
+
+Fix techniques:
+- Keep header, primary navigation, search, and footer links in the same order across pages
+- Use a shared layout/template so navigation order is consistent
+- New items may be added, but existing items should keep their relative order
+
+Common failures:
+- Navigation links appearing in a different order on different pages
+- Search box moving location between pages
+- Footer links reordered inconsistently
+
+Related axe-core rules: (no automated axe-core rule; requires manual review)""",
+    },
+    {
+        "criterion_id": "3.2.4",
+        "level": "AA",
+        "title": "Consistent Identification",
+        "chunk_text": """WCAG 2.2 SC 3.2.4: Consistent Identification (Level AA)
+
+Requirement: Components that have the same functionality within a set of web pages are identified consistently.
+
+Why it matters: Users learn what an icon or label means once. If the same "Search" action is labeled "Search" on one page and "Find" on another, or uses different icons, users with cognitive disabilities are confused.
+
+Fix techniques:
+- Use the same accessible name and icon for the same function across pages (e.g., always "Download")
+- Keep alt text consistent for the same icon used in multiple places
+- Standardize button labels in a shared component library
+
+Common failures:
+- A "Print" function labeled differently on different pages
+- The same icon given different alt text in different locations
+- Inconsistent labels for the same action (Submit vs Send vs Go)
+
+Related axe-core rules: (no automated axe-core rule; requires manual review)""",
+    },
+    {
+        "criterion_id": "3.2.6",
+        "level": "A",
+        "title": "Consistent Help",
+        "chunk_text": """WCAG 2.2 SC 3.2.6: Consistent Help (Level A, WCAG 2.2 new)
+
+Requirement: If a web page contains help mechanisms (human contact details, a contact mechanism, self-help links, or an automated contact tool) repeated across multiple pages, they occur in the same relative order on each page, unless the user changes it.
+
+Why it matters: New in WCAG 2.2. Users with cognitive disabilities who need help should find it in a predictable place. Inconsistent placement of help links or chat widgets makes assistance hard to relocate.
+
+Fix techniques:
+- Place help links (Contact, Support, Help, chat launcher) in the same relative location across pages
+- Use a shared layout so the help mechanism's position is stable
+- Keep the contact phone/email, support link, or chat widget in a consistent spot (e.g., header or footer)
+
+Common failures:
+- A "Contact us" link in the header on one page and only in the footer on another
+- A chat widget that appears in different corners on different pages
+
+Related axe-core rules: (no automated axe-core rule; requires manual review)""",
+    },
+    {
+        "criterion_id": "3.3.3",
+        "level": "AA",
+        "title": "Error Suggestion",
+        "chunk_text": """WCAG 2.2 SC 3.3.3: Error Suggestion (Level AA)
+
+Requirement: If an input error is automatically detected and suggestions for correction are known, the suggestions are provided to the user, unless doing so would jeopardize security or purpose.
+
+Why it matters: It is not enough to say a value is wrong; users (especially those with cognitive disabilities) need to know how to fix it. A suggested correction reduces frustration and abandonment.
+
+Fix techniques:
+- Provide specific, actionable error text: "Date must be in MM/DD/YYYY format" not "Invalid date"
+- Suggest the expected value or format in the error message
+- For known options, suggest the closest match ("Did you mean .com?")
+- Associate the suggestion with the field via aria-describedby
+
+Common failures:
+- "Invalid input" with no guidance on the correct format
+- Required-field error with no indication of what is expected
+- Date/phone errors that don't show the accepted format
+
+Related axe-core rules: (no automated axe-core rule; requires manual review)""",
+    },
+    {
+        "criterion_id": "3.3.4",
+        "level": "AA",
+        "title": "Error Prevention (Legal, Financial, Data)",
+        "chunk_text": """WCAG 2.2 SC 3.3.4: Error Prevention (Legal, Financial, Data) (Level AA)
+
+Requirement: For pages that create legal commitments or financial transactions, modify/delete user-controllable data, or submit test responses, submissions are reversible, checked for errors with a chance to correct, or confirmed (the user can review and confirm before finalizing).
+
+Why it matters: Mistakes in legal, financial, or data-deletion contexts can be costly and hard to undo. Users with disabilities are more prone to input slips and benefit from a confirmation step.
+
+Fix techniques:
+- Add a review/confirmation step before finalizing a purchase or legal submission
+- Provide a way to cancel or reverse transactions where feasible
+- Validate inputs and let the user correct them before final submit
+- Add a confirmation dialog before deleting data: "Delete this account? This cannot be undone."
+
+Common failures:
+- One-click irreversible deletion with no confirmation
+- Checkout that charges immediately with no review step
+- Form submission with no error check or chance to correct
+
+Related axe-core rules: (no automated axe-core rule; requires manual review)""",
+    },
+    {
+        "criterion_id": "3.3.7",
+        "level": "A",
+        "title": "Redundant Entry",
+        "chunk_text": """WCAG 2.2 SC 3.3.7: Redundant Entry (Level A, WCAG 2.2 new)
+
+Requirement: Information previously entered by or provided to the user that is required again in the same process is either auto-populated or available for the user to select, except when re-entering it is essential (e.g., a password confirmation), the information is no longer valid, or it is needed for security.
+
+Why it matters: New in WCAG 2.2. Re-typing the same information is taxing for users with cognitive or motor disabilities and increases error rates. Multi-step forms commonly ask for the same data twice.
+
+Fix techniques:
+- Auto-fill fields already collected earlier in the same flow (e.g., copy billing to shipping with a checkbox)
+- Offer a "same as above" toggle to reuse prior entries
+- Persist entered data across steps so users don't re-key it
+- Pre-select previously chosen options where appropriate
+
+Common failures:
+- Checkout asking for an address already entered on a prior step
+- Multi-step wizard re-prompting for the same email with no auto-fill or select
+- No "same as billing" option for shipping
+
+Related axe-core rules: (no automated axe-core rule; requires manual review)""",
+    },
+    {
+        "criterion_id": "3.3.8",
+        "level": "AA",
+        "title": "Accessible Authentication (Minimum)",
+        "chunk_text": """WCAG 2.2 SC 3.3.8: Accessible Authentication (Minimum) (Level AA, WCAG 2.2 new)
+
+Requirement: A cognitive function test (such as remembering a password or solving a puzzle) is not required for any step in authentication, unless that step provides an alternative that does not rely on a cognitive function test, or a mechanism to assist (such as allowing password managers / copy-paste), or the test is object recognition or identifying non-text content the user provided.
+
+Why it matters: New in WCAG 2.2. People with cognitive disabilities struggle to memorize passwords, transcribe one-time codes, or solve puzzle CAPTCHAs. Authentication must not depend on these without an accessible alternative.
+
+Fix techniques:
+- Allow password managers and copy-paste into username/password and OTP fields (do not block paste)
+- Use autocomplete tokens so credentials autofill: autocomplete="current-password", autocomplete="one-time-code"
+- Offer authentication that doesn't require memorization: email links, passkeys/WebAuthn, OAuth
+- Avoid puzzle/text-transcription CAPTCHAs; if used, provide an accessible alternative
+
+Common failures:
+- Blocking paste on password or one-time-code fields
+- Puzzle or distorted-text CAPTCHA with no accessible alternative
+- Requiring users to retype a code from memory or another device with no copy/autofill path
+
+Related axe-core rules: (no automated axe-core rule; requires manual review)""",
+    },
+    {
+        "criterion_id": "1.2.4",
+        "level": "AA",
+        "title": "Captions (Live)",
+        "chunk_text": """WCAG 2.2 SC 1.2.4: Captions (Live) (Level AA)
+
+Requirement: Captions are provided for all live audio content in synchronized media (live video with sound, such as webinars and live streams).
+
+Why it matters: Deaf and hard-of-hearing users need real-time captions to follow live events. Unlike prerecorded media, captions must be produced as the event happens.
+
+Fix techniques:
+- Use a real-time captioning service (CART) or live stenographer for important live events
+- Enable platform live-caption features for webinars and streams
+- Display captions synchronized with the live audio with minimal latency
+- Review automated live captions for critical events; accuracy requirements still apply
+
+Common failures:
+- Live webinar or stream with audio and no live captions
+- Caption latency so high the captions are unusable
+
+Related axe-core rules: (no automated axe-core rule; requires manual review)""",
+    },
+    {
+        "criterion_id": "1.2.5",
+        "level": "AA",
+        "title": "Audio Description (Prerecorded)",
+        "chunk_text": """WCAG 2.2 SC 1.2.5: Audio Description (Prerecorded) (Level AA)
+
+Requirement: Audio description is provided for all prerecorded video content in synchronized media.
+
+Why it matters: Blind and low-vision users miss visual information (actions, scene changes, on-screen text) that is shown but not conveyed in the main audio. An audio description narrates this during natural pauses.
+
+Fix techniques:
+- Add an audio description track that narrates key visual information during pauses in dialogue
+- Where pauses are insufficient, provide an extended-description or descriptive version of the video
+- Offer a toggle to enable the described audio track
+- Script visual-heavy content so essential visuals are also spoken in the main track where possible
+
+Common failures:
+- Tutorial or marketing video with important on-screen visuals and no audio description
+- A described track that omits essential visual actions
+
+Related axe-core rules: (no automated axe-core rule; requires manual review)""",
+    },
+    {
+        "criterion_id": "1.4.6",
+        "level": "AAA",
+        "title": "Contrast (Enhanced)",
+        "chunk_text": """WCAG 2.2 SC 1.4.6: Contrast (Enhanced) (Level AAA)
+
+Requirement: Text and images of text have a contrast ratio of at least 7:1. Large text (18pt / 24px, or 14pt / 18.67px bold) requires at least 4.5:1.
+
+Why it matters: This Level AAA criterion raises the bar above 1.4.3 to better serve users with moderately low vision (roughly 20/80) without assistive technology. Some organizations and regulated sectors target AAA contrast.
+
+Fix techniques:
+- Achieve at least 7:1 for normal text; e.g. #000 on #fff (21:1), #595959 on white (7.0:1)
+- For large text, achieve at least 4.5:1
+- Verify with a contrast checker that reports both AA and AAA thresholds
+- Prefer near-black body text on white rather than mid-grays
+
+Common failures:
+- Body text at #767676 on white (4.54:1) passes AA but fails AAA 7:1
+- Mid-gray secondary text that meets only the AA minimum
+
+Related axe-core rules: color-contrast-enhanced""",
+    },
+    {
+        "criterion_id": "2.5.5",
+        "level": "AAA",
+        "title": "Target Size (Enhanced)",
+        "chunk_text": """WCAG 2.2 SC 2.5.5: Target Size (Enhanced) (Level AAA)
+
+Requirement: The size of the target for pointer inputs is at least 44×44 CSS pixels, except when an equivalent target meets the size, the target is inline, the size is essential, or it is a user-agent default.
+
+Why it matters: This Level AAA criterion sets a larger minimum than 2.5.8 (24×24) and aligns with iOS and Android platform guidance. Larger targets help users with tremors, limited dexterity, or touch on small devices.
+
+Fix techniques:
+- Make interactive targets at least 44×44px, including padding around small icons
+- CSS: min-height: 44px; min-width: 44px; padding to extend the hit area
+- Space out adjacent small controls so taps don't land on the wrong one
+- Apply especially to primary touch targets: buttons, nav items, form controls
+
+Common failures:
+- Icon buttons or close "×" controls smaller than 44×44px
+- Densely packed toolbar icons with no padding
+- Small tappable links in mobile navigation
+
+Related axe-core rules: target-size""",
     },
 ]

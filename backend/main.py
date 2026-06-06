@@ -405,12 +405,22 @@ def _migrate_db() -> None:
 
 
 def _auto_ingest_wcag() -> None:
+    # Tests set SKIP_WCAG_INGEST to avoid loading the fastembed model on startup.
+    if os.environ.get("SKIP_WCAG_INGEST"):
+        return
     try:
         from embeddings import embed
         from wcag_data import WCAG_CHUNKS
         with Session(engine) as s:
-            if s.exec(select(WcagChunk).limit(1)).first():
+            existing = s.exec(select(WcagChunk)).all()
+            # Re-sync when the corpus changes (e.g. the WCAG base was expanded):
+            # only the row count differing triggers a rebuild, so a normal
+            # startup with an up-to-date base is a single cheap COUNT.
+            if len(existing) == len(WCAG_CHUNKS):
                 return
+            for row in existing:
+                s.delete(row)
+            s.flush()
             texts = [c["chunk_text"] for c in WCAG_CHUNKS]
             vectors = embed(texts)
             for c, v in zip(WCAG_CHUNKS, vectors):

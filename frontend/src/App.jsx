@@ -688,9 +688,17 @@ function HolisticView({ scanId, review, loading, onRun, error }) {
 
   const overall = review.overall ?? 0;
   const overallCls = overall >= 70 ? "holistic-overall-good" : overall >= 50 ? "holistic-overall-warn" : "holistic-overall-bad";
+  const { pages_analyzed, pages_total } = review;
+  const partialReview =
+    pages_analyzed != null && pages_total != null && pages_analyzed < pages_total;
 
   return (
     <div className="holistic-view">
+      {partialReview && (
+        <p className="holistic-coverage muted">
+          Based on the first {pages_analyzed} of {pages_total} scanned pages.
+        </p>
+      )}
       <div className="holistic-header">
         <div className="holistic-overall">
           <span className={`holistic-score ${overallCls}`}>{overall}</span>
@@ -746,7 +754,9 @@ function IssuesView({ pages, fixSuggestions, fixLoading, fixErrors, onGetFix, sc
     );
   }
 
-  const allEmpty = pages?.every((p) => p.issues.length === 0);
+  // A page with zero issues but a scan error should still surface its warning,
+  // so "everything empty" only counts when no page errored either.
+  const allEmpty = pages?.every((p) => p.issues.length === 0 && !p.error);
   if (!pages || pages.length === 0 || allEmpty) {
     return (
       <div className="tab-empty">
@@ -763,7 +773,14 @@ function IssuesView({ pages, fixSuggestions, fixLoading, fixErrors, onGetFix, sc
     return (
       <div key={page.id} className="page-block">
         <h3 className="page-url">{page.url}</h3>
-        {sorted.length === 0 ? <p className="muted">No issues on this page.</p> : (
+        {page.error && (
+          <p className="page-scan-error" role="status">
+            ⚠ Couldn&apos;t scan this page — {page.error}
+          </p>
+        )}
+        {sorted.length === 0 ? (
+          page.error ? null : <p className="muted">No issues on this page.</p>
+        ) : (
           <div className="table-scroll">
           <table>
             <caption className="visually-hidden">Accessibility issues found on {page.url}</caption>
@@ -1355,6 +1372,7 @@ export default function App() {
   const counts = { critical: 0, serious: 0, moderate: 0, minor: 0 };
   allIssues.forEach((i) => counts[i.severity] != null && counts[i.severity]++);
   const needsManual = allIssues.filter((i) => i.verification === "needs_manual").length;
+  const erroredPages = scan?.pages?.filter((p) => p.error).length ?? 0;
   const components = scan?.components ?? [];
   const isDone = scan?.status === "done";
 
@@ -1496,6 +1514,11 @@ export default function App() {
                 <span className="count-moderate">{counts.moderate} moderate</span>
                 <span className="count-minor">{counts.minor} minor</span>
                 <span className="count-manual">{needsManual} need manual review</span>
+                {erroredPages > 0 && (
+                  <span className="count-errored">
+                    {erroredPages} page{erroredPages !== 1 ? "s" : ""} failed to scan
+                  </span>
+                )}
               </span>
             )}
             {scan.status === "failed" && (
