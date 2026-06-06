@@ -4,6 +4,7 @@
   "type": "module",
   "dependencies": {
     "@axe-core/playwright": "^4.10.1",
-    "playwright": "^1.49.1"
+    "playwright": "^1.49.1",
+    "pngjs": "^7.0.0"
   }
 }

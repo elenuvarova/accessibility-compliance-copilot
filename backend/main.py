@@ -1741,30 +1741,65 @@ def _save_page_meta(page_id: int, meta: dict) -> None:
 
 
 def _save_issues(page_id: int, data: dict) -> None:
+    # Pixel-level contrast verdicts from the scanner, keyed by the node's joined
+    # target selector (matches how `selector` is built below). For "incomplete"
+    # color-contrast nodes the scanner screenshots the real background and
+    # measures the WCAG contrast ratio, turning a "needs manual review" into a
+    # definite PASS (no Issue) or FAIL (a CONFIRMED Issue).
+    checks = {v["key"]: v for v in data.get("contrastChecks", []) if v.get("key")}
     with Session(engine) as s:
         for item in data.get("violations", []):
             _add_nodes(s, page_id, item, "auto")
         for item in data.get("incomplete", []):
-            _add_nodes(s, page_id, item, "needs_manual")
+            _add_nodes(s, page_id, item, "needs_manual", checks)
         s.commit()
 
 
-def _add_nodes(session: Session, page_id: int, item: dict, verification: str) -> None:
+def _add_nodes(
+    session: Session,
+    page_id: int,
+    item: dict,
+    verification: str,
+    checks: Optional[dict] = None,
+) -> None:
     rule_id = item.get("id", "unknown")
     if not rule_id:
         return  # malformed axe item without a rule id — skip it
     wcag = json.dumps([t for t in item.get("tags", []) if t.startswith("wcag")])
+    is_contrast = rule_id == "color-contrast" and checks is not None
     for node in item.get("nodes", []):
+        node_verification = verification
+        description = item.get("description", "")
+
+        if is_contrast:
+            key = ", ".join(node.get("target", []))
+            verdict = checks.get(key)
+            if verdict is not None:
+                if verdict.get("pass"):
+                    # Measured PASS — text genuinely meets AA over its real
+                    # background; do not store an Issue at all.
+                    continue
+                # Measured FAIL — promote to a CONFIRMED violation and annotate
+                # the description with the measured ratio and required threshold.
+                node_verification = "auto"
+                contrast = verdict.get("contrast")
+                threshold = verdict.get("threshold")
+                description = (
+                    f"{description} (pixel-measured contrast {contrast}:1, "
+                    f"needs ≥ {threshold}:1)"
+                )
+            # No verdict → fall through and store as needs_manual (unchanged).
+
         session.add(
             Issue(
                 page_id=page_id,
                 rule_id=rule_id,
                 wcag_criteria=wcag,
                 severity=item.get("impact") or "moderate",
-                verification=verification,
+                verification=node_verification,
                 selector=", ".join(node.get("target", [])),
                 html_snippet=(node.get("html") or "")[:500],
-                description=item.get("description", ""),
+                description=description,
                 help_url=item.get("helpUrl", ""),
             )
         )
