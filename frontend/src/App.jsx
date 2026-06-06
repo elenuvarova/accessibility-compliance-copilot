@@ -2,6 +2,11 @@ import { useState, useEffect, useRef, useCallback } from "react";
 
 const SEVERITY_ORDER = { critical: 0, serious: 1, moderate: 2, minor: 3 };
 
+// Views whose section heading is shown as a visible <h2>. The remaining views
+// (ai-review, checklist, report, history) render their own visible title block,
+// so their <h2> stays screen-reader-only to avoid a duplicated heading.
+const VISIBLE_PANEL_TITLES = new Set(["backlog", "components", "issues", "review"]);
+
 // Optional API key for locked-down deployments. Unset locally / on the open
 // demo, so no header is sent and the backend stays open. Set VITE_API_KEY at
 // build time (matching the backend's APP_API_KEY) to protect the API.
@@ -1412,8 +1417,21 @@ export default function App() {
     <div className="container">
       <ThemeToggle theme={theme} onToggle={toggleTheme} />
 
-      <h1>Accessibility Compliance Copilot</h1>
-      <p className="tagline">Component-level a11y audit — honest about what automation can and can&apos;t cover.</p>
+      <header className="masthead">
+        <div className="brand-lockup">
+          <span className="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" width="28" height="28"><rect width="32" height="32" rx="7" fill="var(--color-blue)" /><path d="M9 16.5 L14 21.5 L23 11" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          </span>
+          <span className="brand-name">a11y<span className="brand-name-accent">scan</span></span>
+        </div>
+        <h1 className="masthead-title">Ship accessible. Prove it.</h1>
+        <p className="masthead-sub">Component-level WCAG&nbsp;2.2 audits with EAA&nbsp;&amp; ADA risk scoring — honest about what automation can and can&apos;t cover.</p>
+        <ul className="layer-strip" aria-label="How the audit works">
+          <li className="layer-pill layer-auto"><span className="layer-dot" />Automated <span className="layer-meta">axe-core engine</span></li>
+          <li className="layer-pill layer-ai"><span className="layer-dot" />AI review <span className="layer-meta">what scanners miss</span></li>
+          <li className="layer-pill layer-manual"><span className="layer-dot" />Manual <span className="layer-meta">guided checklist</span></li>
+        </ul>
+      </header>
 
       <form onSubmit={handleSubmit} className="scan-form">
         <div className="scan-inputs">
@@ -1581,7 +1599,9 @@ export default function App() {
               aria-labelledby={`tab-${activeTab.id}`}
               tabIndex={0}
             >
-              <h2 className="visually-hidden">{activeTab.heading}</h2>
+              <h2 className={VISIBLE_PANEL_TITLES.has(activeTab.id) ? "panel-title" : "visually-hidden"}>
+                {activeTab.heading}
+              </h2>
 
               {view === "backlog" && <BacklogView components={components} allIssues={allIssues} />}
               {view === "components" && <ComponentsView components={components} />}
