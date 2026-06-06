@@ -1828,4 +1828,11 @@ if os.environ.get("NODE_ENV") == "production" and os.path.isdir(_PUBLIC):
         # confusing parse error instead of a clean 404.
         if full_path.startswith("api/"):
             raise HTTPException(status_code=404, detail="Not found")
+        # Serve real public-root files (favicon.svg, theme-init.js, …) with
+        # their correct MIME type. Otherwise they'd fall through to the SPA
+        # shell (text/html) and break under nosniff. Guard path traversal.
+        if full_path:
+            candidate = os.path.normpath(os.path.join(_PUBLIC, full_path))
+            if candidate.startswith(_PUBLIC + os.sep) and os.path.isfile(candidate):
+                return FileResponse(candidate)
         return FileResponse(os.path.join(_PUBLIC, "index.html"))
